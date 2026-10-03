@@ -64,7 +64,7 @@ void GprlMenu::buildBoard() {
                 medalDrawn = true;
             }
         }
-        if (!medalDrawn) text(node, fmt::format("#{}", pos), 8.f, h / 2.f, 36.f, posColor, 0.42f, kGoldFont, {0.f, 0.5f});
+        if (!medalDrawn) text(node, fmt::format("#{}", pos), 8.f, h / 2.f, 36.f, posColor, 0.42f * kGoldToBig, kBig, {0.f, 0.5f});
         ranks::Rank const* rank = nullptr;
         int division = 0;
         if (row.rank && list) {

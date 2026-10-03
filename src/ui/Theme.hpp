@@ -68,6 +68,11 @@ constexpr ccColor3B kLiveRed{230, 40, 40};
 constexpr char const* kBig = "bigFont.fnt";
 constexpr char const* kGoldFont = "goldFont.fnt";
 constexpr char const* kChat = "chatFont.fnt";
+// goldFont's glyphs ARE gold, so a tint multiplies with that gold (on an unmodded GD Diamond blue
+// turned green and Ascendant purple brown; owner report 2026-10-03 once their texture pack was
+// off). Text in a rank / medal colour therefore uses bigFont, whose glyphs are white, at
+// kGoldToBig x the goldFont scale (UHD capitals: bigFont 78 px, goldFont 59 px).
+constexpr float kGoldToBig = 59.f / 78.f;
 
 constexpr float kPi = 3.14159265358979f;
 

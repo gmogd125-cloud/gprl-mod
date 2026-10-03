@@ -94,7 +94,7 @@ void GprlMenu::buildRanks() {
             nameRoom -= tag->getContentSize().width + 10.f;
         }
         std::string title = ascendant ? fmt::format("{}   {} sigma/s", r.name, ranks::formatBands(r)) : r.name;
-        auto nameLabel = text(row, title, textX, nameY, std::max(60.f, nameRoom), unreached ? kDim : toCc(r.color), 0.46f, kGoldFont, {0.f, 0.5f});
+        auto nameLabel = text(row, title, textX, nameY, std::max(60.f, nameRoom), unreached ? kDim : toCc(r.color), 0.46f * kGoldToBig, kBig, {0.f, 0.5f});
         nameLabel->setOpacity(alpha);
         if (ascendant) {
             auto req = text(row, "Needs: " + ranks::formatRequirements(r.requirements), textX, h - 27.f, fullW, kGrey, kTiny, kChat, {0.f, 0.5f});

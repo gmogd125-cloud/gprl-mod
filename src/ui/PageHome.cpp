@@ -231,7 +231,7 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
         rankColor = kWhite;
     }
     else rankText = "Unranked";
-    text(m_page, rankText, leftCx, H - 112.f, 120.f, rankColor, 0.48f, kGoldFont, {0.5f, 0.5f});
+    text(m_page, rankText, leftCx, H - 112.f, 120.f, rankColor, 0.48f * kGoldToBig, kBig, {0.5f, 0.5f});
     if (progress) {
         text(m_page, fmt::format("to {}  {}%", progress->nextName, static_cast<int>(std::floor(progress->percent + 1e-9))), leftCx, H - 126.f, 120.f, kGrey, kTiny, kChat,
              {0.5f, 0.5f});

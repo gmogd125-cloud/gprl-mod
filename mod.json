@@ -5,7 +5,7 @@
 	},
 	"id": "gmo12.gprl",
 	"name": "GPRL",
-	"version": "v0.14.12",
+	"version": "v0.14.13",
 	"developer": "Gmo12",
 	"description": "Geometry Precision Ranking List client: connect with your Geometry Dash account (no website account needed), then it records inputs, deaths, progress and player state as reproducible telemetry, shows your calibration progress, and sends evidence to the GPRL server (or keeps it on disk in local-only mode). Optional clipping keeps a video of exceptional runs for you to save or send (never uploaded on its own). The server computes every rating; this mod never does. Created by gmo.",
 	"tags": [
