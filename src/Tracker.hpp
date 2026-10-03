@@ -7,7 +7,8 @@
 //
 // Attempts: one per resetLevel (and the level start), identified by "<session>-a<n>" with the GD
 // attempt number, the session attempt count, the start percent (StartPos / practice checkpoint),
-// the StartPos tick and the noclip state. Deaths end an attempt; would-be deaths under noclip do
+// the StartPos tick and the noclip state. Deaths and would-be deaths are judged by
+// noclip-death-detector/2 (core/death_detector, src/DeathPath): deaths end an attempt; would-be deaths under noclip do
 // not (SPEC §19). Level complete / exit / restart end it with that reason.
 //
 // Every function here runs on the game thread. Nothing blocks, nothing allocates beyond the event
@@ -16,6 +17,7 @@
 
 #include <string>
 
+#include "../core/death_detector.hpp"
 #include "../core/snapshot.hpp"
 #include "../core/vocab.hpp"
 
@@ -39,8 +41,24 @@ void onButton(GJBaseGameLayer* layer, bool down, int button, bool isPlayer1);
 void onPortal(GJBaseGameLayer* layer, PlayerObject* p, int objectId);
 /// After any PlayerObject::toggle*Mode: emits gamemode_change when the effective mode changed.
 void onGamemodeToggle(PlayerObject* p);
-/// After PlayLayer::destroyPlayer. `wasDead` = m_isDead before the call, `isDead` = after.
-void onDestroyPlayer(PlayLayer* pl, PlayerObject* player, GameObject* object, bool wasDead, bool isDead);
+/// noclip-death-detector/2 (core/death_detector, src/DeathPath): the session / attempt generation
+/// a kill is stamped with WHEN THE GAME RAISES IT. Both counters only ever grow, so a kill of an
+/// earlier attempt or level can never match the current one.
+struct Generation {
+    uint32_t session = 0;
+    uint32_t attempt = 0;
+    bool open = false;   // an attempt is open
+};
+Generation generation();
+/// The detector's verdict for one kill candidate; changes the detector's state only (a real death
+/// closes its attempt, a new lethal contact is counted). A candidate for another layer is stale.
+death::Verdict judgeDeath(PlayLayer* pl, death::Candidate const& candidate);
+/// Applies an ACCEPTED verdict: the `death` event (real death: the attempt ends; new would-be
+/// death: the attempt is marked noclip, SPEC §19), the session counters. `player` is the real live
+/// player the verdict names, `object` the object the game passed (may be null).
+void applyDeath(PlayLayer* pl, death::Verdict const& verdict, death::Candidate const& candidate, PlayerObject* player, GameObject* object);
+/// The open (or last) attempt's detector counters, for the debug summary.
+death::Counters deathCounters();
 /// PlayLayer::levelComplete.
 void onLevelComplete(PlayLayer* pl);
 /// PlayLayer::onQuit (layer still valid) / PlayLayer destruction (layerValid = false).

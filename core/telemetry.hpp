@@ -17,7 +17,8 @@
 //   input           player (1|2), button (jump|left|right), down, tSubTick in [0,1)
 //   state_sample    state: PlayerStateSnapshot (core/snapshot.hpp, all fields)
 //   gamemode_change player, from, to, portalObjectId
-//   death           percent, x, objectId, wouldBe
+//   death           percent, x, objectId, wouldBe, + noclip-death-detector/2 (geode >= 0.14.9, all
+//                   optional): detector, source, player, hazardType, contactId, attemptGeneration
 //   timing_window   inputSeq, inputKind, earliestMs, latestMs, actualMs, boundedEarly, boundedLate,
 //                   resolutionMs, holdMinMs?, holdMaxMs? (number | null | omitted; the wire form is
 //                   preserved because canonical.ts keeps null), scope, solverVersion, fingerprint,
@@ -144,6 +145,15 @@ struct DeathPayload {
     double x = 0.0;
     int objectId = 0;
     bool wouldBe = false;   // SPEC §19: a death that noclip skipped
+    // noclip-death-detector/2 (geode >= 0.14.9, core/death_detector, docs/TELEMETRY.md §12). Older
+    // builds send none of them; this build sends them together (`detector` empty = all omitted, the
+    // wire form of the frozen goldens).
+    std::string detector;            // death::kDetectorVersion
+    std::string source;              // live_gd_death | external_kill (the only sources ever sent)
+    int player = 0;                  // 1 | 2: the real live player GD tried to kill
+    int hazardType = -1;             // GameObjectType of the object GD passed; -1 = none (omitted)
+    int contactId = 0;               // the attempt's continuous lethal contact; 0 = a real death (omitted)
+    int64_t attemptGeneration = 0;   // the mod's attempt generation the kill was raised in
 };
 
 /// Tri-state wire field for `key?: T | null` (schema.ts `holdMinMs?: number | null`). All three

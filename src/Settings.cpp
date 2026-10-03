@@ -33,6 +33,7 @@ void load() {
     s.showHud = m->getSettingValue<bool>("show-hud");
     s.showLastWindow = m->getSettingValue<bool>("show-last-window");
     s.debugLog = m->getSettingValue<bool>("debug-log");
+    s.deathDebug = m->getSettingValue<bool>("death-debug");
     // Owner decision 2026-10-02: measuring cannot be turned off (`measure-windows` was removed; a
     // saved `false` from v0.11 and older is never read). Only Record-Safe Mode stops the live solver.
     s.solverSubtick = m->getSettingValue<std::string>("solver-subtick");

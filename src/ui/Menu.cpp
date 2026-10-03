@@ -104,15 +104,6 @@ void GprlMenu::buildSidebar() {
         holder->setAnchorPoint({0.5f, 0.5f});
         auto bg = panel(holder, 0.f, 0.f, kTileW, kTileH, kCard, 190, -1);
         m_tileBg[i] = bg;
-        // selected marker: a thin cyan bar along the left edge
-        auto accent = CCScale9Sprite::create("square02b_001.png", {0, 0, 80, 80});
-        accent->setContentSize({3.f, kTileH - 10.f});
-        accent->setAnchorPoint({0.f, 0.5f});
-        accent->setPosition({1.5f, kTileH / 2.f});
-        accent->setColor(kCyan);
-        accent->setVisible(false);
-        holder->addChild(accent, 1);
-        m_tileAccent[i] = accent;
         CCNode* ic = icon(kTabs[i].icon, 19.f);
         if (!ic) {
             auto l = CCLabelBMFont::create(kTabs[i].label, kBig);
@@ -122,7 +113,7 @@ void GprlMenu::buildSidebar() {
         ic->setPosition({kTileW / 2.f, kTileH - 15.f});
         holder->addChild(ic, 1);
         m_tileIcon[i] = ic;
-        auto label = text(holder, kTabs[i].label, kTileW / 2.f, 9.f, kTileW - 6.f, kGrey, 0.3f, kBig, {0.5f, 0.5f});
+        auto label = text(holder, kTabs[i].label, kTileW / 2.f, 9.f, kTileW - 6.f, kGrey, 0.32f, kBig, {0.5f, 0.5f});
         m_tileLabel[i] = label;
         auto btn = CCMenuItemSpriteExtra::create(holder, this, menu_selector(GprlMenu::onTab));
         btn->setTag(i);
@@ -130,7 +121,7 @@ void GprlMenu::buildSidebar() {
         menu->addChild(btn);
     }
     // the mod version at the bottom of the sidebar
-    text(m_mainLayer, "v" + Mod::get()->getVersion().toNonVString(), cx, 17.f, kSideW - 8.f, kDim, 0.3f, kChat, {0.5f, 0.5f});
+    text(m_mainLayer, "v" + Mod::get()->getVersion().toNonVString(), cx, 17.f, kSideW - 8.f, kDim, kTiny, kChat, {0.5f, 0.5f});
 }
 
 void GprlMenu::onTab(CCObject* sender) {
@@ -147,9 +138,8 @@ void GprlMenu::selectScreen(Screen screen) {
         bool on = i == static_cast<int>(screen);
         if (auto* bg = typeinfo_cast<CCScale9Sprite*>(m_tileBg[i])) {
             bg->setColor(on ? kCardSelected : kCard);
-            bg->setOpacity(on ? 235 : 190);
+            bg->setOpacity(on ? 245 : 190);
         }
-        m_tileAccent[i]->setVisible(on);
         if (m_tileLabel[i]) m_tileLabel[i]->setColor(on ? kWhite : kGrey);
         if (auto* rgba = typeinfo_cast<CCSprite*>(m_tileIcon[i])) rgba->setOpacity(on ? 255 : 170);
     }
@@ -265,9 +255,12 @@ CCMenu* GprlMenu::pageMenu() {
 void GprlMenu::emptyState(std::string const& title, std::string const& line1, std::string const& line2) {
     using namespace theme;
     float const cx = kContentW / 2.f;
-    text(m_page, title, cx, kContentH * 0.62f, kContentW - 40.f, kGold, 0.55f, kGoldFont, {0.5f, 0.5f});
-    if (!line1.empty()) text(m_page, line1, cx, kContentH * 0.62f - 22.f, kContentW - 40.f, kWhite, 0.42f, kChat, {0.5f, 0.5f});
-    if (!line2.empty()) text(m_page, line2, cx, kContentH * 0.62f - 36.f, kContentW - 40.f, kGrey, 0.38f, kChat, {0.5f, 0.5f});
+    float const w = kContentW - 60.f;
+    float top = kContentH * 0.66f;
+    text(m_page, title, cx, top, w, kGold, 0.6f, kGoldFont, {0.5f, 0.5f});
+    top -= 18.f;
+    if (!line1.empty()) top -= paragraph(m_page, line1, 30.f, top, w, kBody, kWhite, 3, kCCTextAlignmentCenter)->getHeight() + 6.f;
+    if (!line2.empty()) paragraph(m_page, line2, 30.f, top, w, kSmall, kGrey, 3, kCCTextAlignmentCenter);
 }
 
 bool GprlMenu::siteState(client::SiteData const& site, client::SiteFetchState const& st, char const* what) {

@@ -5,7 +5,7 @@
 	},
 	"id": "gmo12.gprl",
 	"name": "GPRL",
-	"version": "v0.14.7",
+	"version": "v0.14.9",
 	"developer": "Gmo12",
 	"description": "Geometry Precision Ranking List client: connect with your Geometry Dash account (no website account needed), then it records inputs, deaths, progress and player state as reproducible telemetry, shows your calibration progress, and sends evidence to the GPRL server (or keeps it on disk in local-only mode). Optional clipping keeps a video of exceptional runs for you to save or send (never uploaded on its own). The server computes every rating; this mod never does. Created by gmo.",
 	"tags": [
@@ -83,6 +83,12 @@
 			"type": "bool",
 			"name": "Debug log",
 			"description": "Write every event, batch and network step to the Geode log (also turns the solver log to verbose).",
+			"default": false
+		},
+		"death-debug": {
+			"type": "bool",
+			"name": "Debug: deaths and noclip would-be deaths",
+			"description": "For checking a death GPRL counted that you did not see. Writes one line to the Geode log for every kill the game raises (accepted or rejected, with the reason, the player, the object and both hitboxes) and draws them in the level: your hitbox (cyan), the object's hitbox (red), a yellow mark where they overlap, and a small list of the last entries at the bottom left. A would-be death is only counted when Geometry Dash itself tried to kill your real player; GPRL never guesses one from hitboxes. Drawing and logging only: it never touches the physics.",
 			"default": false
 		},
 		"analysis-title": {

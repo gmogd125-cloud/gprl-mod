@@ -78,7 +78,7 @@ and every number should look like a number, not a log line.
 
 **Shell** (`Menu.cpp`, sizes in `Theme.hpp`, drawing pieces in `Widgets.hpp`): a 480 x 300 popup on
 GD's blue square with two dark navy panels - a **sidebar** of five icon tiles (Home, Ranks, Board,
-Level, Account; the selected tile is tinted cyan with a left accent bar; the mod version sits
+Level, Account; the selected tile is tinted cyan; the mod version sits
 under them) and the **content area** (380 x 252) under a header strip with the screen title and
 the **status chips**: `Connected` / `Not connected` / `Connecting...`, a red `LIVE` chip exactly
 when `display::liveNow()` is true (the same rule as the HUD tag), `Offline`, `Local-only` /
@@ -87,6 +87,20 @@ when `display::liveNow()` is true (the same rule as the HUD tag), `Offline`, `Lo
 the text it would show changed (a per-screen key compared on the 0.5 s tick), so buttons stay put
 under the cursor and the scroll lists keep their position; the sign-in code countdown is updated
 in place.
+
+**Sizes** (owner feedback 2026-10-03, v0.14.8; `Theme.hpp` type scale). GD's fonts at scale 1 are chatFont 18 px,
+goldFont 29 px and bigFont 35 px tall, so body text is chatFont 0.5 (9 px), supporting lines 0.44
+(8 px) and nothing a player reads is under 0.4 (7 px). A one-line label that does not fit shrinks
+to 80 % at most and is then cut with "..." (`text` / `fitLabel`); longer texts wrap
+(`paragraph`, Geode `SimpleTextArea`, optional line cap) and the card or row grows with them
+(Account's Connection card, the Ranks strip and rows, every row of the Details popup). GD's
+`ButtonSprite` only scales its LABEL with its `scale` argument (the button stays about 30 points
+high), so every text button here is built at GD's usual look and the whole sprite is scaled to an
+exact height (`button`, `wideButton`, `buttonRow`: 13-17 points on the Account screen, 28 for
+the welcome Connect); a row that would be wider than its card is scaled down together. Rounded
+panels are `roundRect`: the `square02b_001.png` nine-slice built at least 56 points on its short
+side and scaled down, because a nine-slice smaller than its own corner slices draws stray lines
+(the old 3-point accent bar on the selected sidebar tile was exactly that, and is gone).
 
 - **Home** (`PageHome.cpp`). Not connected: a **welcome screen** - the sigma/s logo, one sentence
   on what GPRL measures, three step cards (`1. Connect` / `2. Play` / `3. Get ranked`), one big
@@ -111,7 +125,7 @@ in place.
   attempts if the level were 100 seconds long, not a fast or first-try beat) and the ladder as the
   server lists it: 56 px rows (38 for Ascendant tiers) with the badge, the name in the rank colour,
   `III 0-20  II 20-40  I 40-60 sigma/s`, `Needs: ...`, the description; the player's row is tinted
-  in its rank colour with a left accent bar and a `YOU ARE HERE` chip; unreached Ascendant tiers
+  in its rank colour with a `YOU ARE HERE` chip; unreached Ascendant tiers
   are dimmed with an `Unreached` chip; `n players` on the right when the server counts them.
 - **Board** (`PageBoard.cpp`): 24 px rows - `#1` with GD's `rankIcon_1_001.png` medal, `#2` /
   `#3` in silver / bronze, the badge, the name (green on the player's own tinted row), the band
@@ -1509,6 +1523,37 @@ was left lets a later MenuLayer try again).
    then).
 8. When a job finishes: `analysis done - ...` then `analysis of level <id> sent - stored yes ...`
    (or `not sent: the server does not know this level version yet` before the session existed).
+
+## v0.14.9 (deaths and would-be deaths: `noclip-death-detector/2`)
+
+`docs/NOCLIP_DEATH_DETECTOR.md` is the design, the evidence and the old-data table.
+
+- `core/death_detector.{hpp,cpp}` (pure): `Candidate` -> `Verdict` (death / would_be_death /
+  same_contact / rejected + reason + source), the per-player continuous-contact rule, the session /
+  attempt generation checks, the debug record (`format`, `overlayLabel`, `DebugHistory`).
+  `tests/death_detector_tests.cpp` is the owner's regression pack A-L.
+- `src/DeathPath.{hpp,cpp}`: `liveSlot` / `isRealLivePlayer` (THE identity rule), `begin` /
+  `finish` around the game's death path, the scope hooks (`GJBaseGameLayer::update` innermost,
+  `checkCollisions`), the innermost `PlayLayer::destroyPlayer` hook ("the game's own function was
+  reached"), the collision-return signal, the debug log and the overlay.
+- `src/Hooks.cpp`: `destroyPlayer` = clone claim -> `deathpath::begin` -> the original ->
+  `deathpath::finish`; `resetLevel` is bracketed by `resetBegin` / `resetEnd`.
+- `src/Tracker.cpp`: `generation()`, `judgeDeath` (the detector), `applyDeath` (the `death` event
+  with the new fields, attempt end, counters). `classify::classifyDestroy` /
+  `startsWouldBeDeath` are the v0.14.1 rules, kept for the pinned classification fixtures only.
+
+In-game log checklist (setting "Debug: deaths and noclip would-be deaths" on):
+
+- Level page -> Details: `Death detector noclip-death-detector/2: physics-step scope working`.
+  `NOT SEEN YET` after a few seconds of play = the scope hooks do not fire: report it.
+- One spike under noclip: `GPRL death: ACCEPT would_be_death contact=1 reason=new_lethal_contact
+  source=live_gd_death via=destroy_hook ... gd_death_fired=no ... in_live_step=yes`, then one
+  `ACCEPT same_contact ... | +N more through tick T (final count)` line. Not one line per tick.
+- Open air: no `ACCEPT` line. Solver running: only `REJECT rejected ... source=rejected_clone`.
+- End of a level: `REJECT ... reason=gd_ignores_locked_player` lines at most, no would-be death.
+- A normal death (noclip off): `ACCEPT death reason=real_death ... gd_death_fired=yes dead_after=yes`.
+- The overlay: cyan / orange player box, red object box, yellow overlap mark, the list at the
+  bottom left. A death "in the air" shows which of the two boxes is not where it looks.
 
 ## v0.14.6 (Ship data reaches the calibration; why a session does not count)
 

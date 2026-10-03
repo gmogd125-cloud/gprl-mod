@@ -408,6 +408,14 @@ Value toJson(Event const& e) {
             o.set("x", p.x);
             o.set("objectId", p.objectId);
             o.set("wouldBe", p.wouldBe);
+            if (!p.detector.empty()) {
+                o.set("detector", p.detector);
+                o.set("source", p.source);
+                o.set("player", p.player);
+                if (p.hazardType >= 0) o.set("hazardType", p.hazardType);
+                if (p.contactId > 0) o.set("contactId", p.contactId);
+                o.set("attemptGeneration", p.attemptGeneration);
+            }
         }
         else if constexpr (std::is_same_v<T, TimingWindowPayload>) {
             o.set("inputSeq", p.inputSeq);
@@ -626,6 +634,14 @@ bool fromJson(Value const& v, Event& e, std::string* err) {
             p.x = v.getNumber("x");
             p.objectId = static_cast<int>(v.getInt("objectId"));
             p.wouldBe = v.getBool("wouldBe");
+            if (auto* d = v.find("detector"); d && d->isString()) {
+                p.detector = d->asString();
+                p.source = v.getString("source");
+                p.player = static_cast<int>(v.getInt("player"));
+                if (auto* ht = v.find("hazardType"); ht && ht->isNumber()) p.hazardType = static_cast<int>(ht->asInt());
+                if (auto* ci = v.find("contactId"); ci && ci->isNumber()) p.contactId = static_cast<int>(ci->asInt());
+                p.attemptGeneration = v.getInt("attemptGeneration");
+            }
             e.payload = p;
             break;
         }
@@ -1140,6 +1156,15 @@ bool validateBatch(Batch const& b, std::string* err) {
                 num(c, path + "/percent", p.percent, false, 0.0, 100.0);
                 num(c, path + "/x", p.x);
                 num(c, path + "/objectId", p.objectId, true, 0.0);
+                if (!p.detector.empty()) {
+                    // noclip-death-detector/2: only an accepted death of a real live player is ever sent
+                    str(c, path + "/detector", p.detector);
+                    if (p.source != "live_gd_death" && p.source != "external_kill") c.fail(path + "/source", "expected live_gd_death | external_kill");
+                    if (p.wouldBe && p.source != "live_gd_death") c.fail(path + "/source", "a would-be death is a live_gd_death");
+                    slot(c, path + "/player", p.player);
+                    if (p.wouldBe && p.contactId < 1) c.fail(path + "/contactId", "a would-be death names its lethal contact");
+                    num(c, path + "/attemptGeneration", static_cast<double>(p.attemptGeneration), true, 1.0);
+                }
             }
             else if constexpr (std::is_same_v<T, TimingWindowPayload>) {
                 num(c, path + "/inputSeq", static_cast<double>(p.inputSeq), true, 0.0);

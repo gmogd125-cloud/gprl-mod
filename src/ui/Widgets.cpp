@@ -9,11 +9,38 @@ using namespace geode::prelude;
 
 namespace gprl::ui {
 
+// ---- text ----
+
+void fitLabel(CCLabelBMFont* label, std::string const& str, float maxWidth, float scale, float minScale) {
+    label->setString(str.c_str());
+    label->setScale(scale);
+    if (maxWidth <= 0.f) return;
+    float w = label->getContentSize().width;
+    if (w <= 0.f || w * scale <= maxWidth) return;
+    float const floorScale = minScale > 0.f ? std::min(minScale, scale) : scale * theme::kMinShrink;
+    float const fit = maxWidth / w;
+    if (fit >= floorScale) {
+        label->setScale(fit);
+        return;
+    }
+    // too long even at the smallest readable size: keep what fits and end with "..."
+    label->setScale(floorScale);
+    size_t lo = 0, hi = str.size();
+    while (lo < hi) {
+        size_t mid = (lo + hi + 1) / 2;
+        label->setString((str.substr(0, mid) + "...").c_str());
+        if (label->getContentSize().width * floorScale <= maxWidth) lo = mid;
+        else hi = mid - 1;
+    }
+    std::string cut = str.substr(0, lo);
+    while (!cut.empty() && cut.back() == ' ') cut.pop_back();
+    label->setString((cut + "...").c_str());
+}
+
 CCLabelBMFont* text(CCNode* parent, std::string const& str, float x, float y, float maxWidth, ccColor3B color, float scale, char const* font, CCPoint anchor,
                     float minScale) {
     auto label = CCLabelBMFont::create(str.c_str(), font);
-    label->setScale(scale);
-    if (maxWidth > 0.f) label->limitLabelWidth(maxWidth, scale, minScale);
+    fitLabel(label, str, maxWidth, scale, minScale);
     label->setAnchorPoint(anchor);
     label->setPosition({x, y});
     label->setColor(color);
@@ -21,13 +48,50 @@ CCLabelBMFont* text(CCNode* parent, std::string const& str, float x, float y, fl
     return label;
 }
 
-CCScale9Sprite* panel(CCNode* parent, float x, float y, float w, float h, ccColor3B tint, GLubyte opacity, int z) {
+SimpleTextArea* makeParagraph(std::string const& str, float width, float scale, ccColor3B color, size_t maxLines, CCTextAlignment align, char const* font) {
+    auto area = SimpleTextArea::create(str, font, scale, width);
+    area->setLinePadding(2.f);
+    if (maxLines > 0) area->setMaxLines(maxLines);
+    if (align != kCCTextAlignmentLeft) area->setAlignment(align);
+    area->setColor({color.r, color.g, color.b, 255});
+    area->setAnchorPoint({0.f, 1.f});
+    return area;
+}
+
+void place(CCNode* parent, SimpleTextArea* area, float x, float topY) {
+    area->setAnchorPoint({0.f, 1.f});
+    area->setPosition({x, topY});
+    parent->addChild(area);
+}
+
+SimpleTextArea* paragraph(CCNode* parent, std::string const& str, float x, float topY, float width, float scale, ccColor3B color, size_t maxLines,
+                          CCTextAlignment align, char const* font) {
+    auto area = makeParagraph(str, width, scale, color, maxLines, align, font);
+    place(parent, area, x, topY);
+    return area;
+}
+
+// ---- panels ----
+
+CCScale9Sprite* roundRect(float w, float h, ccColor3B tint, GLubyte opacity) {
+    w = std::max(1.f, w);
+    h = std::max(1.f, h);
+    // the nine-slice's corner slices are a third of the 80 px sprite each: below two of them
+    // (plus a sliver of centre) the slices would overlap, so build it larger and scale it down
+    constexpr float kMinSide = 56.f;
+    float const s = std::min(1.f, std::min(w, h) / kMinSide);
     auto bg = CCScale9Sprite::create("square02b_001.png", {0, 0, 80, 80});
-    bg->setContentSize({std::max(8.f, w), std::max(8.f, h)});
+    bg->setContentSize({w / s, h / s});
+    bg->setScale(s);
     bg->setAnchorPoint({0.f, 0.f});
-    bg->setPosition({x, y});
     bg->setColor(tint);
     bg->setOpacity(opacity);
+    return bg;
+}
+
+CCScale9Sprite* panel(CCNode* parent, float x, float y, float w, float h, ccColor3B tint, GLubyte opacity, int z) {
+    auto bg = roundRect(w, h, tint, opacity);
+    bg->setPosition({x, y});
     parent->addChild(bg, z);
     return bg;
 }
@@ -38,10 +102,12 @@ CCNode* card(CCNode* parent, float x, float y, float w, float h, char const* tit
     node->setAnchorPoint({0.f, 0.f});
     node->setPosition({x, y});
     panel(node, 0.f, 0.f, w, h, tint, opacity, -1);
-    if (title && *title) text(node, title, theme::kPad, h - 5.f, w - 2.f * theme::kPad, theme::kGold, 0.42f, theme::kGoldFont);
+    if (title && *title) text(node, title, theme::kPad, h - 5.f, w - 2.f * theme::kPad, theme::kGold, theme::kTitle, theme::kGoldFont);
     parent->addChild(node);
     return node;
 }
+
+// ---- sprites ----
 
 CCSprite* modSprite(std::string const& file) {
     std::string name = Mod::get()->expandSpriteName(file);
@@ -122,10 +188,8 @@ CCNode* badge(ranks::Rank const* rank, int division, float size, bool dim) {
         auto label = CCLabelBMFont::create(numeral.c_str(), theme::kBig);
         float scale = size / 120.f * 0.5f;
         label->setScale(scale);
-        auto pill = CCScale9Sprite::create("square02b_001.png", {0, 0, 80, 80});
-        pill->setColor({0, 0, 0});
-        pill->setOpacity(dim ? 90 : 160);
-        pill->setContentSize({label->getScaledContentSize().width + size * 0.12f, label->getScaledContentSize().height + size * 0.05f});
+        auto pill = roundRect(label->getScaledContentSize().width + size * 0.12f, label->getScaledContentSize().height + size * 0.05f, {0, 0, 0}, dim ? 90 : 160);
+        pill->setAnchorPoint({0.5f, 0.5f});
         pill->setPosition({size / 2.f, size * 0.19f});
         label->setPosition({size / 2.f, size * 0.19f});
         if (dim) label->setOpacity(140);
@@ -134,6 +198,8 @@ CCNode* badge(ranks::Rank const* rank, int division, float size, bool dim) {
     }
     return node;
 }
+
+// ---- gauges ----
 
 namespace {
 
@@ -155,6 +221,14 @@ void arc(CCDrawNode* draw, float cx, float cy, float rIn, float rOut, float a0, 
 
 ccColor4F toF(ccColor3B c, GLubyte a = 255) { return ccc4f(c.r / 255.f, c.g / 255.f, c.b / 255.f, a / 255.f); }
 
+ButtonSprite* buttonSprite(char const* label, char const* texture, float height) {
+    // the label scale (0.8) is GD's usual look; the button's size comes from scaling the sprite
+    auto spr = ButtonSprite::create(label, theme::kGoldFont, texture, 0.8f);
+    float h = spr->getContentSize().height;
+    spr->setScale(h > 0.f ? height / h : 1.f);
+    return spr;
+}
+
 }  // namespace
 
 CCNode* ring(float radius, float thickness, double fraction, ccColor3B color, ccColor3B track, GLubyte trackOpacity) {
@@ -162,7 +236,7 @@ CCNode* ring(float radius, float thickness, double fraction, ccColor3B color, cc
     node->setContentSize({2.f * radius, 2.f * radius});
     node->setAnchorPoint({0.5f, 0.5f});
     auto draw = CCDrawNode::create();
-    float rOut = radius, rIn = std::max(1.f, radius - thickness);
+    float rOut = radius, rIn = std::max(0.f, radius - thickness);
     arc(draw, radius, radius, rIn, rOut, 0.f, 2.f * theme::kPi, toF(track, trackOpacity));
     double f = std::clamp(fraction, 0.0, 1.0);
     if (f > 0.0) {
@@ -179,22 +253,9 @@ CCNode* bar(float w, float h, double fraction, ccColor3B fill, ccColor3B track, 
     auto node = CCNode::create();
     node->setContentSize({w, h});
     node->setAnchorPoint({0.f, 0.5f});
-    auto bg = CCScale9Sprite::create("square02b_001.png", {0, 0, 80, 80});
-    bg->setContentSize({w, h});
-    bg->setAnchorPoint({0.f, 0.f});
-    bg->setPosition({0.f, 0.f});
-    bg->setColor(track);
-    bg->setOpacity(trackOpacity);
-    node->addChild(bg);
+    node->addChild(roundRect(w, h, track, trackOpacity));
     double f = std::clamp(fraction, 0.0, 1.0);
-    if (f > 0.0) {
-        auto fg = CCScale9Sprite::create("square02b_001.png", {0, 0, 80, 80});
-        fg->setContentSize({std::max(h, static_cast<float>(w * f)), h});
-        fg->setAnchorPoint({0.f, 0.f});
-        fg->setPosition({0.f, 0.f});
-        fg->setColor(fill);
-        node->addChild(fg, 1);
-    }
+    if (f > 0.0) node->addChild(roundRect(std::max(h, static_cast<float>(w * f)), h, fill, 255), 1);
     return node;
 }
 
@@ -207,13 +268,7 @@ CCNode* chip(std::string const& label, ccColor3B background, ccColor3B foregroun
     float h = l->getScaledContentSize().height + 4.f;
     node->setContentSize({w, h});
     node->setAnchorPoint({0.f, 0.5f});
-    auto bg = CCScale9Sprite::create("square02b_001.png", {0, 0, 80, 80});
-    bg->setContentSize({w, h});
-    bg->setAnchorPoint({0.f, 0.f});
-    bg->setPosition({0.f, 0.f});
-    bg->setColor(background);
-    bg->setOpacity(opacity);
-    node->addChild(bg);
+    node->addChild(roundRect(w, h, background, opacity));
     l->setPosition({w / 2.f, h / 2.f});
     node->addChild(l, 1);
     return node;
@@ -224,30 +279,27 @@ CCNode* tile(float w, float h, std::string const& value, std::string const& capt
     node->setContentSize({w, h});
     node->setAnchorPoint({0.f, 0.f});
     panel(node, 0.f, 0.f, w, h, tint, 220, -1);
-    text(node, value, w / 2.f, h * 0.62f, w - 8.f, valueColor, 0.44f, theme::kBig, {0.5f, 0.5f});
-    text(node, caption, w / 2.f, h * 0.24f, w - 6.f, theme::kGrey, 0.32f, theme::kChat, {0.5f, 0.5f});
+    text(node, value, w / 2.f, h - 11.f, w - 8.f, valueColor, 0.46f, theme::kBig, {0.5f, 0.5f});
+    text(node, caption, w / 2.f, 7.5f, w - 6.f, theme::kGrey, theme::kTiny, theme::kChat, {0.5f, 0.5f});
     return node;
 }
 
-SimpleTextArea* paragraph(CCNode* parent, std::string const& str, float x, float topY, float width, float scale, ccColor3B color, char const* font) {
-    auto area = SimpleTextArea::create(str, font, scale, width);
-    area->setAnchorPoint({0.f, 1.f});
-    area->setPosition({x, topY});
-    area->setColor({color.r, color.g, color.b, 255});
-    parent->addChild(area);
-    return area;
-}
+// ---- buttons ----
 
-CCMenuItemSpriteExtra* button(CCMenu* menu, char const* label, char const* texture, float scale, CCObject* target, SEL_MenuHandler handler, int tag) {
-    auto spr = ButtonSprite::create(label, theme::kGoldFont, texture, scale);
-    auto btn = CCMenuItemSpriteExtra::create(spr, target, handler);
+CCMenuItemSpriteExtra* button(CCMenu* menu, char const* label, char const* texture, float height, CCObject* target, SEL_MenuHandler handler, int tag) {
+    auto btn = CCMenuItemSpriteExtra::create(buttonSprite(label, texture, height), target, handler);
     btn->setTag(tag);
     menu->addChild(btn);
     return btn;
 }
 
-CCMenuItemSpriteExtra* wideButton(CCMenu* menu, char const* label, int width, char const* texture, float scale, CCObject* target, SEL_MenuHandler handler, int tag) {
-    auto spr = ButtonSprite::create(label, width, true, theme::kGoldFont, texture, 28.f, scale);
+CCMenuItemSpriteExtra* wideButton(CCMenu* menu, char const* label, float width, char const* texture, float height, CCObject* target, SEL_MenuHandler handler,
+                                  int tag) {
+    constexpr float kNative = 30.f;   // GD's button height; the sprite is built at it and scaled to `height`
+    float const k = height / kNative;
+    auto spr = ButtonSprite::create(label, static_cast<int>(width / k), true, theme::kGoldFont, texture, kNative, 0.8f);
+    float h = spr->getContentSize().height;
+    spr->setScale(h > 0.f ? height / h : k);
     auto btn = CCMenuItemSpriteExtra::create(spr, target, handler);
     btn->setTag(tag);
     menu->addChild(btn);
@@ -265,6 +317,44 @@ CCMenuItemSpriteExtra* iconButton(CCMenu* menu, char const* frame, float size, C
     btn->setTag(tag);
     menu->addChild(btn);
     return btn;
+}
+
+CCSize sizeOf(CCMenuItemSpriteExtra* btn) {
+    if (!btn) return {0.f, 0.f};
+    if (auto* n = btn->getNormalImage()) return n->getScaledContentSize();
+    return btn->getContentSize();
+}
+
+std::vector<CCMenuItemSpriteExtra*> buttonRow(CCMenu* menu, std::vector<ButtonSpec> const& specs, float x, float y, float height, float maxWidth,
+                                              CCObject* target, bool fromRight, float gap, float* usedWidth) {
+    std::vector<CCMenuItemSpriteExtra*> out;
+    if (usedWidth) *usedWidth = 0.f;
+    if (specs.empty()) return out;
+    std::vector<ButtonSprite*> sprites;
+    float total = 0.f;
+    for (auto const& s : specs) {
+        auto spr = buttonSprite(s.label, s.texture, height);
+        sprites.push_back(spr);
+        total += spr->getScaledContentSize().width;
+    }
+    float const gaps = gap * static_cast<float>(specs.size() - 1);
+    if (maxWidth > 0.f && total > 0.f && total + gaps > maxWidth) {
+        float const f = std::max(0.3f, (maxWidth - gaps) / total);
+        for (auto* spr : sprites) spr->setScale(spr->getScale() * f);
+        total *= f;
+    }
+    float cursor = x;
+    for (size_t i = 0; i < specs.size(); ++i) {
+        float const w = sprites[i]->getScaledContentSize().width;
+        auto btn = CCMenuItemSpriteExtra::create(sprites[i], target, specs[i].handler);
+        btn->setPosition({fromRight ? cursor - w / 2.f : cursor + w / 2.f, y});
+        cursor += fromRight ? -(w + gap) : (w + gap);
+        menu->addChild(btn);
+        setButtonEnabled(btn, specs[i].enabled);
+        out.push_back(btn);
+    }
+    if (usedWidth) *usedWidth = total + gaps;
+    return out;
 }
 
 void setButtonEnabled(CCMenuItemSpriteExtra* btn, bool enabled) {

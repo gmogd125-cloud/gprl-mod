@@ -28,6 +28,10 @@ struct Settings {
     bool showHud = true;
     bool showLastWindow = true;   // middle-right readout of the last measured window
     bool debugLog = false;
+    // noclip-death-detector/2 (docs/NOCLIP_DEATH_DETECTOR.md §6): one Geode log line per death /
+    // would-be-death candidate (accepted or rejected, with the reason) and the hitbox overlay in the
+    // level. Off by default: nothing is read or drawn for it then.
+    bool deathDebug = false;
     // solver (docs/SOLVER_DESIGN.md): timing windows are measured with hidden clones in every
     // analysis mode (owner decision 2026-10-02: `measure-windows` was removed, only Record-Safe
     // Mode stops the live solver)

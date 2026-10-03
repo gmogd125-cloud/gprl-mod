@@ -1,5 +1,6 @@
 // Ranks screen of the GPRL menu: the ladder as the server lists it, with the owner's disclaimer
 // (rank levels = ~10,000 attempts on a 100-second level) and the player's own row marked.
+#include <algorithm>
 #include <cmath>
 
 #include "Menu.hpp"
@@ -30,13 +31,16 @@ void GprlMenu::buildRanks() {
     auto menu = pageMenu();
 
     // the disclaimer strip (owner wording, 2026-10-02) with the full text behind the info button
-    float const stripH = 34.f;
-    auto strip = card(m_page, 6.f, H - 6.f - stripH, W - 12.f, stripH, nullptr, {70, 58, 22}, 225);
-    text(strip, "What the level ranges mean", kPad, stripH - 9.f, W - 60.f, kGold, 0.38f, kGoldFont, {0.f, 0.5f});
-    text(strip, "A rank's levels are what you could beat in about 10,000 attempts on a 100-second level - not a fast or first-try beat.", kPad, stripH - 23.f, W - 48.f,
-         kWhite, 0.32f, kChat, {0.f, 0.5f});
+    float const stripW = W - 2.f * kGap;
+    auto note = makeParagraph("A rank's levels are what you could beat in about 10,000 attempts on a 100-second level - not a fast or first-try beat.",
+                              stripW - 2.f * kPad - 24.f, kSmall, kWhite, 3);
+    float const stripH = 20.f + note->getHeight() + 6.f;
+    float const stripY = H - kGap - stripH;
+    auto strip = card(m_page, kGap, stripY, stripW, stripH, nullptr, {70, 58, 22}, 225);
+    text(strip, "What the level ranges mean", kPad, stripH - 5.f, stripW - 2.f * kPad - 24.f, kGold, 0.4f, kGoldFont);
+    place(strip, note, kPad, stripH - 20.f);
     auto info = iconButton(menu, "GJ_infoIcon_001.png", 16.f, this, menu_selector(GprlMenu::onRanksInfo));
-    info->setPosition({W - 20.f, H - 6.f - stripH / 2.f});
+    info->setPosition({kGap + stripW - 14.f, stripY + stripH / 2.f});
 
     // where the player is: the official rank from the profile
     int youRank = -1;
@@ -47,67 +51,61 @@ void GprlMenu::buildRanks() {
         youDivision = site.profile.rank->division;
     }
 
-    float const listW = W - 12.f, listH = H - 18.f - stripH;
+    float const listW = W - 2.f * kGap, listH = stripY - 2.f * kGap;
     auto scroll = ScrollLayer::create(CCSize{listW, listH});
-    scroll->setPosition({6.f, 6.f});
+    scroll->setPosition({kGap, kGap});
     scroll->m_contentLayer->setLayout(ScrollLayer::createDefaultListLayout(3.f));
     m_page->addChild(scroll);
     float const rowW = listW - 2.f;
+    float const textX = 54.f;
+    float const fullW = rowW - textX - 10.f;
 
     for (size_t i = 0; i < list.ranks.size(); ++i) {
         auto const& r = list.ranks[i];
         bool you = static_cast<int>(i) == youRank;
         bool ascendant = r.kind == ranks::Kind::Ascendant;
         bool unreached = ascendant && !r.reached;
-        float const h = ascendant ? 38.f : 56.f;
+        GLubyte const alpha = unreached ? 110 : 255;
+        // the description wraps, so the row's height follows it
+        SimpleTextArea* desc = nullptr;
+        if (!ascendant && !r.description.empty()) desc = makeParagraph(r.description, fullW, kTiny, kGrey, 2);
+        float const h = ascendant ? 38.f : std::max(46.f, 6.f + 14.f + 11.f + 10.f + (desc ? desc->getHeight() + 3.f : 0.f) + 6.f);
         ccColor3B tint = you ? toCc(ranks::scaled(r.color, 0.32)) : kCard;
         auto row = CCNode::create();
         row->setContentSize({rowW, h});
-        panel(row, 0.f, 0.f, rowW, h, tint, unreached ? 90 : (you ? 240 : 200), -1);
-        if (you) {
-            auto accent = CCScale9Sprite::create("square02b_001.png", {0, 0, 80, 80});
-            accent->setContentSize({3.f, h - 8.f});
-            accent->setAnchorPoint({0.f, 0.5f});
-            accent->setPosition({1.5f, h / 2.f});
-            accent->setColor(toCc(r.color));
-            row->addChild(accent);
-        }
-        GLubyte const alpha = unreached ? 110 : 255;
+        panel(row, 0.f, 0.f, rowW, h, tint, unreached ? 90 : (you ? 245 : 200), -1);
         auto b = badge(&r, ascendant ? 0 : (you ? youDivision : 0), ascendant ? 28.f : 40.f, unreached);
-        b->setPosition({26.f, h / 2.f});
+        b->setPosition({27.f, h / 2.f});
         row->addChild(b);
 
-        float const textX = 52.f;
         // the right-aligned tag first: the name is clipped to the room left of it
-        float nameRoom = rowW - textX - 10.f;
+        float const nameY = h - 13.f;
+        float nameRoom = fullW;
         CCNode* tag = nullptr;
         if (unreached) tag = chip("Unreached", {60, 60, 70}, kGrey, 0.28f);
-        else if (you) tag = chip("YOU ARE HERE", toCc(ranks::scaled(r.color, 0.55)), kWhite, 0.3f);
+        else if (you) tag = chip("YOU ARE HERE", toCc(ranks::scaled(r.color, 0.55)), kWhite, 0.28f);
         else if (r.playerCount > 0) {
-            auto t = text(row, fmt::format("{} player{}", r.playerCount, r.playerCount == 1 ? "" : "s"), rowW - 8.f, h - 11.f, 90.f, kGrey, 0.32f, kChat, {1.f, 0.5f});
+            auto t = text(row, fmt::format("{} player{}", r.playerCount, r.playerCount == 1 ? "" : "s"), rowW - 8.f, nameY, 90.f, kGrey, kTiny, kChat, {1.f, 0.5f});
             nameRoom -= t->getScaledContentSize().width + 10.f;
         }
         if (tag) {
-            tag->setPosition({rowW - 8.f - tag->getContentSize().width, h - 11.f});
+            tag->setPosition({rowW - 8.f - tag->getContentSize().width, nameY});
             row->addChild(tag);
             nameRoom -= tag->getContentSize().width + 10.f;
         }
         std::string title = ascendant ? fmt::format("{}   {} sigma/s", r.name, ranks::formatBands(r)) : r.name;
-        auto nameLabel = text(row, title, textX, h - 11.f, std::max(60.f, nameRoom), unreached ? kDim : toCc(r.color), 0.44f, kGoldFont, {0.f, 0.5f});
+        auto nameLabel = text(row, title, textX, nameY, std::max(60.f, nameRoom), unreached ? kDim : toCc(r.color), 0.46f, kGoldFont, {0.f, 0.5f});
         nameLabel->setOpacity(alpha);
-        float const fullW = rowW - textX - 10.f;
-        float y = h - 24.f;
-        if (!ascendant) {
-            auto bands = text(row, ranks::formatBands(r) + " sigma/s", textX, y, fullW, unreached ? kDim : kWhite, 0.38f, kChat, {0.f, 0.5f});
-            bands->setOpacity(alpha);
-            y -= 11.f;
+        if (ascendant) {
+            auto req = text(row, "Needs: " + ranks::formatRequirements(r.requirements), textX, h - 27.f, fullW, kGrey, kTiny, kChat, {0.f, 0.5f});
+            req->setOpacity(alpha);
         }
-        auto req = text(row, "Needs: " + ranks::formatRequirements(r.requirements), textX, y, fullW, kGrey, 0.32f, kChat, {0.f, 0.5f});
-        req->setOpacity(alpha);
-        y -= 11.f;
-        if (!ascendant && !r.description.empty()) {
-            auto d = text(row, r.description, textX, y, fullW, kGrey, 0.32f, kChat, {0.f, 0.5f});
-            d->setOpacity(alpha);
+        else {
+            auto bands = text(row, ranks::formatBands(r) + " sigma/s", textX, h - 26.f, fullW, kWhite, 0.46f, kChat, {0.f, 0.5f});
+            bands->setOpacity(alpha);
+            auto req = text(row, "Needs: " + ranks::formatRequirements(r.requirements), textX, h - 37.f, fullW, kGrey, kTiny, kChat, {0.f, 0.5f});
+            req->setOpacity(alpha);
+            if (desc) place(row, desc, textX, h - 44.f);
         }
         scroll->m_contentLayer->addChild(row);
     }

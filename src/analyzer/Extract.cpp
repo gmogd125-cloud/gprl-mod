@@ -152,7 +152,7 @@ sim::StartState fromSettings(LevelSettingsObject* ls, LevelSettingsObject* level
 
 /// GD's anti-cheat spike (GJBaseGameLayer::m_anticheatSpike, a type-2 hazard PlayLayer moves onto
 /// player 1 every step): never a level object. The rest of the mod ignores it the same way
-/// (GdOracle claimDestroy / onRealDestroy, Tracker onDestroyPlayer).
+/// (GdOracle claimDestroy / onRealDestroy, src/DeathPath + Tracker judgeDeath).
 bool isAnticheatSpike(GameObject* g) {
     auto* pl = s_state.pl;
     if (!pl || !pl->m_anticheatSpike) return false;

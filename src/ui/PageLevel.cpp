@@ -6,6 +6,7 @@
 #include "../../core/display.hpp"
 #include "../../core/solver/trace_view.hpp"
 #include "../../core/vocab.hpp"
+#include "../DeathPath.hpp"
 #include "../Hud.hpp"
 #include "../LocalStore.hpp"
 #include "../Settings.hpp"
@@ -76,9 +77,9 @@ void GprlMenu::buildLevel() {
     std::string key = fmt::format("level|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}", ses.levelId, ses.levelName, ses.levelOpen,
                                   ses.attempts, ses.deaths, ses.jumps, static_cast<int>(std::floor(ses.bestPercent)), ses.completions, ses.wouldBeDeaths,
                                   static_cast<int>(ses.levelActiveMs / 1000.0), static_cast<int>(ses.levelPracticeMs / 1000.0), ses.gdAttemptCount, ses.practice,
-                                  static_cast<int>(trust), live, remote, st.mode == client::SessionMode::Unsent, st.levelCounts, sol.active, sol.measuring, sol.line,
+                                  static_cast<int>(trust), live, remote, static_cast<int>(st.mode), st.levelCounts, sol.active, sol.measuring, sol.line,
                                   sol.emitted, sol.misses, sol.dropped, static_cast<int>(sol.coverage), ab.line1, ab.line2);
-    key += "|" + coverage + "|" + ab.line3;
+    key += "|" + coverage + "|" + ab.line3 + "|" + sol.mismatchKinds + fmt::format("|{}|{}", sol.localSamples, st.sessionOpen);
     if (!beginPage(key)) return;
     if (ses.levelId.empty()) {
         emptyState("No level played yet", "Enter a level: attempts, deaths and your timing windows show up here and on the HUD.",
@@ -86,15 +87,15 @@ void GprlMenu::buildLevel() {
         return;
     }
     float const W = kContentW, H = kContentH;
+    float const cardX = kGap, cardW = W - 2.f * kGap;
+    float const inner = cardW - 2.f * kPad;
     auto menu = pageMenu();
 
     // ---- the level ----
     float const lcH = 46.f;
-    float const lcY = H - 6.f - lcH;
-    auto lc = card(m_page, 6.f, lcY, W - 12.f, lcH);
-    text(lc, ses.levelName.empty() ? std::string("Unnamed level") : ses.levelName, 10.f, lcH - 13.f, 190.f, kWhite, 0.42f, kBig, {0.f, 0.5f});
-    text(lc, fmt::format("ID {}   -   {}", ses.levelId, ses.levelOpen ? "playing now" : "last played"), 10.f, lcH - 31.f, 200.f, kGrey, 0.33f, kChat, {0.f, 0.5f});
-    // chips, right to left, above the Details button
+    float const lcY = H - kGap - lcH;
+    auto lc = card(m_page, cardX, lcY, cardW, lcH);
+    // chips, right to left, on the name's line
     struct Chip {
         std::string text;
         ccColor3B bg;
@@ -106,23 +107,26 @@ void GprlMenu::buildLevel() {
     if (remote) chips.push_back(st.levelCounts ? Chip{"On the levels list", {30, 110, 60}} : Chip{"Feeds calibration only", {70, 76, 100}});
     if (ses.practice) chips.push_back({"Practice", {120, 100, 30}});
     if (trust != TrustState::Allowed) chips.push_back({trustWord(trust), {150, 70, 40}});
-    float right = W - 12.f - 8.f;
+    float right = cardW - kPad;
     for (auto it = chips.rbegin(); it != chips.rend(); ++it) {
         auto c = chip(it->text, it->bg, kWhite, 0.28f);
         right -= c->getContentSize().width;
-        c->setPosition({right, lcH - 13.f});
+        c->setPosition({right, lcH - 14.f});
         lc->addChild(c);
         right -= 4.f;
     }
-    auto details = button(menu, "Details", "GJ_button_04.png", 0.3f, this, menu_selector(GprlMenu::onDetails));
-    details->setPosition({W - 6.f - 8.f - details->getScaledContentSize().width / 2.f, lcY + 13.f});
+    text(lc, ses.levelName.empty() ? std::string("Unnamed level") : ses.levelName, kPad, lcH - 14.f, std::max(80.f, right - kPad - 6.f), kWhite, 0.45f, kBig,
+         {0.f, 0.5f}, 0.3f);
+    auto details = button(menu, "Details", "GJ_button_04.png", 15.f, this, menu_selector(GprlMenu::onDetails));
+    details->setPosition({cardX + cardW - kPad - sizeOf(details).width / 2.f, lcY + 13.f});
+    text(lc, fmt::format("ID {}   -   {}", ses.levelId, ses.levelOpen ? "playing now" : "last played"), kPad, 13.f, inner - sizeOf(details).width - 8.f, kGrey, kSmall,
+         kChat, {0.f, 0.5f});
 
     // ---- stat tiles (2 x 4) ----
-    float const gap = 5.f;
-    float const tileW = (W - 12.f - 3.f * gap) / 4.f;
-    float const tileH = 27.f;
-    float const row1Y = lcY - 6.f - tileH;
-    float const row2Y = row1Y - gap - tileH;
+    float const tileW = (cardW - 3.f * kGap) / 4.f;
+    float const tileH = 32.f;
+    float const row1Y = lcY - kGap - tileH;
+    float const row2Y = row1Y - kGap - tileH;
     struct Stat {
         std::string value;
         char const* caption;
@@ -137,10 +141,10 @@ void GprlMenu::buildLevel() {
         {std::to_string(ses.completions), "completions", ses.completions > 0 ? kGold : kWhite},
         {seconds(ses.levelActiveMs / 1000.0), "time playing", kWhite},
         {seconds(ses.levelPracticeMs / 1000.0), "in practice", kWhite},
-        {fourth, ses.wouldBeDeaths > 0 ? "noclip would-be deaths" : "GD attempts (save)", ses.wouldBeDeaths > 0 ? kOrange : kGrey},
+        {fourth, ses.wouldBeDeaths > 0 ? "noclip deaths" : "GD attempts", ses.wouldBeDeaths > 0 ? kOrange : kGrey},
     };
     for (int i = 0; i < 8; ++i) {
-        float x = 6.f + static_cast<float>(i % 4) * (tileW + gap);
+        float x = cardX + static_cast<float>(i % 4) * (tileW + kGap);
         float y = i < 4 ? row1Y : row2Y;
         auto t = tile(tileW, tileH, stats[i].value, stats[i].caption, stats[i].color);
         t->setPosition({x, y});
@@ -148,37 +152,38 @@ void GprlMenu::buildLevel() {
     }
 
     // ---- timing windows (solver) and the background analysis share the rest ----
-    float const top = row2Y - 6.f;
-    float const total = top - 6.f;
-    float const solverH = std::floor(total * 0.52f);
-    float const analysisH = total - solverH - 6.f;
-    auto sc = card(m_page, 6.f, 6.f + analysisH + 6.f, W - 12.f, solverH, "Timing windows");
-    ccColor3B solColor = sol.measuring ? (sol.levelOnly ? kGold : kGreen) : (sol.active ? kOrange : kGold);
-    text(sc, sol.line, kPad, solverH - 19.f, W - 12.f - 2.f * kPad, solColor, 0.34f, kChat, {0.f, 0.5f});
-    if (sol.active) {
-        float by = solverH - 33.f;
-        text(sc, fmt::format("Inputs with a window: {}%", static_cast<int>(std::floor(sol.coverage))), kPad, by, 130.f, kGrey, 0.33f, kChat, {0.f, 0.5f});
-        auto pb = bar(W - 12.f - 2.f * kPad - 140.f, 5.f, sol.coverage / 100.0, kCyan, {0, 0, 0}, 140);
-        pb->setPosition({kPad + 140.f, by});
-        sc->addChild(pb);
-        std::string counts = fmt::format("{} measured   {} misses   {} dropped", sol.emitted, sol.misses, sol.dropped);
-        if (!sol.mismatchKinds.empty()) counts += "  (" + sol.mismatchKinds + ")";
-        if (sol.localSamples > 0) counts += fmt::format("   {} local samples", sol.localSamples);
-        text(sc, counts, kPad, solverH - 46.f, W - 12.f - 2.f * kPad, kGrey, 0.33f, kChat, {0.f, 0.5f});
+    float const total = row2Y - kGap - kGap;            // room between the tiles and the bottom margin
+    float const analysisH = std::floor((total - kGap) * 0.48f);
+    float const solverH = total - kGap - analysisH;
+    auto sc = card(m_page, cardX, kGap + analysisH + kGap, cardW, solverH, "Timing windows");
+    {
+        float const top = solverH - kTitleH;
+        ccColor3B solColor = sol.measuring ? (sol.levelOnly ? kGold : kGreen) : (sol.active ? kOrange : kGold);
+        text(sc, sol.line, kPad, top - 5.f, inner, solColor, 0.46f, kChat, {0.f, 0.5f});
+        if (sol.active) {
+            float const by = top - 17.f;
+            auto label = text(sc, fmt::format("Inputs with a window: {}%", static_cast<int>(std::floor(sol.coverage))), kPad, by, 170.f, kGrey, kTiny, kChat, {0.f, 0.5f});
+            float const bx = kPad + label->getScaledContentSize().width + 8.f;
+            auto pb = bar(std::max(40.f, cardW - kPad - bx), 5.f, sol.coverage / 100.0, kCyan, {0, 0, 0}, 140);
+            pb->setPosition({bx, by});
+            sc->addChild(pb);
+            std::string counts = fmt::format("{} measured   {} misses   {} dropped", sol.emitted, sol.misses, sol.dropped);
+            if (!sol.mismatchKinds.empty()) counts += "  (" + sol.mismatchKinds + ")";
+            if (sol.localSamples > 0) counts += fmt::format("   {} local samples", sol.localSamples);
+            text(sc, counts, kPad, top - 28.f, inner, kGrey, kTiny, kChat, {0.f, 0.5f});
+        }
+        else paragraph(sc, "The solver finds the exact timing window of every click with hidden copies of the game. It never changes your run.", kPad, top - 12.f, inner,
+                       kTiny, kGrey, 2);
     }
-    else {
-        text(sc, "The solver measures the exact timing window of every click with hidden copies of the game; nothing here changes your run.", kPad, solverH - 33.f,
-             W - 12.f - 2.f * kPad, kGrey, 0.33f, kChat, {0.f, 0.5f});
+    auto ac = card(m_page, cardX, kGap, cardW, analysisH, "Level analysis");
+    {
+        float const top = analysisH - kTitleH;
+        ccColor3B abColor = ab.problem ? kOrange : (ab.active ? kGreen : kGrey);
+        text(ac, ab.line1.empty() ? std::string("Level analysis: off") : ab.line1, kPad, top - 4.5f, inner, abColor, kSmall, kChat, {0.f, 0.5f});
+        if (top - 15.f > 3.f) text(ac, coverage, kPad, top - 15.f, inner, covColor, kTiny, kChat, {0.f, 0.5f});
+        std::string extra = !ab.line3.empty() ? ab.line3 : ab.line2;
+        if (!extra.empty() && top - 25.f > 3.f) text(ac, extra, kPad, top - 25.f, inner, kGrey, kTiny, kChat, {0.f, 0.5f});
     }
-    auto ac = card(m_page, 6.f, 6.f, W - 12.f, analysisH, "Level analysis");
-    ccColor3B abColor = ab.problem ? kOrange : (ab.active ? kGreen : kGrey);
-    float ly = analysisH - 19.f;
-    text(ac, ab.line1.empty() ? std::string("Level analysis: off") : ab.line1, kPad, ly, W - 12.f - 2.f * kPad, abColor, 0.33f, kChat, {0.f, 0.5f});
-    ly -= 11.f;
-    if (ly > 4.f) text(ac, coverage, kPad, ly, W - 12.f - 2.f * kPad, covColor, 0.33f, kChat, {0.f, 0.5f});
-    ly -= 11.f;
-    std::string extra = !ab.line3.empty() ? ab.line3 : ab.line2;
-    if (!extra.empty() && ly > 4.f) text(ac, extra, kPad, ly, W - 12.f - 2.f * kPad, kGrey, 0.31f, kChat, {0.f, 0.5f});
 }
 
 // ---- Details popup ----
@@ -200,7 +205,7 @@ bool DetailsPopup::init() {
     panel(m_mainLayer, 10.f, 10.f, kW - 20.f, kH - 44.f, kPanel, 200);
     m_list = ScrollLayer::create(CCSize{kW - 28.f, kH - 52.f});
     m_list->setPosition({14.f, 14.f});
-    m_list->m_contentLayer->setLayout(ScrollLayer::createDefaultListLayout(1.f));
+    m_list->m_contentLayer->setLayout(ScrollLayer::createDefaultListLayout(2.f));
     m_mainLayer->addChild(m_list);
     onTick(0.f);
     this->schedule(schedule_selector(DetailsPopup::onTick), 0.5f);
@@ -235,6 +240,8 @@ std::vector<std::pair<std::string, ccColor3B>> DetailsPopup::lines() const {
         bool hookProblem = ses.rawPresses > 0 && ses.jumps == 0;
         add(fmt::format("Hook check: handleButton {} / pushButton (P1) {} presses{}", ses.jumps, ses.rawPresses, hookProblem ? "  -  INPUT HOOK NOT FIRING, please report" : ""),
             hookProblem ? kRed : kGrey);
+        // noclip-death-detector/2 (src/DeathPath): hook health + what was accepted / rejected this attempt
+        add(deathpath::summary());
     }
     TrustState trust = tracker::trust();
     add(fmt::format("Trust: {}", trustText(trust)), trust == TrustState::Allowed ? kGreen : kOrange);
@@ -307,9 +314,13 @@ void DetailsPopup::onTick(float) {
     m_list->m_contentLayer->removeAllChildren();
     float const rowW = m_list->getContentSize().width - 2.f;
     for (auto const& l : ls) {
+        if (l.first.empty()) continue;
+        // every raw line wraps at a readable size instead of shrinking to fit one row
+        auto para = makeParagraph(l.first, rowW - 6.f, kSmall, l.second);
         auto row = CCNode::create();
-        row->setContentSize({rowW, 12.5f});
-        text(row, l.first, 2.f, 6.25f, rowW - 4.f, l.second, 0.34f, kChat, {0.f, 0.5f});
+        float const h = para->getHeight() + 3.f;
+        row->setContentSize({rowW, h});
+        place(row, para, 3.f, h - 1.f);
         m_list->m_contentLayer->addChild(row);
     }
     m_list->m_contentLayer->updateLayout();

@@ -12,11 +12,15 @@
 //                                             the original, then the tracker's diagnostic counter
 //   GJBaseGameLayer::handleButton     post -> tracker::onButton -> client::push -> oracle::bindLastInput
 //   PlayLayer::destroyPlayer          pre  -> oracle::claimDestroy (clone deaths, anti-cheat spike),
-//                                     post -> tracker + oracle::onRealDestroy
+//                                     then deathpath::begin / the game's death path / deathpath::finish:
+//                                     noclip-death-detector/2 (src/DeathPath, core/death_detector) is the
+//                                     one judge of deaths and would-be deaths and feeds the analyzer, the
+//                                     tracker and oracle::onRealDestroy with what it accepted
 //
 // v0.12.0 background level analyzer (src/analyzer/Analyzer.hpp, docs/BACKGROUND_ANALYZER_DESIGN.md):
 // READ-ONLY at every point below - it reads player 1 and the level's objects, never writes a GD
-// field, never steps anything (GJBaseGameLayer::update is not hooked for it). Level enter / reset /
+// field, never steps anything (GJBaseGameLayer::update is not hooked for it; v0.14.9 src/DeathPath
+// hooks update / checkCollisions only to count a scope depth). Level enter / reset /
 // death / complete / quit drive its attempts (resetLevel: the attempt ends before the tracker's
 // reset and the next one starts after it); processCommands (pre) and PlayerObject::update (post)
 // its tick clock (a real processCommands also clears its pause flag); pushButton / releaseButton
@@ -30,6 +34,7 @@
 #include <Geode/modify/PlayerObject.hpp>
 #include <Geode/ui/BasedButtonSprite.hpp>
 
+#include "DeathPath.hpp"
 #include "Hud.hpp"
 #include "ui/Menu.hpp"
 #include "Settings.hpp"
@@ -59,6 +64,7 @@ class $modify(GPRLPlayLayer, PlayLayer) {
                 oracle::forgetLayer(self);
                 gprl::tracker::onQuit(self, false);
             }
+            gprl::deathpath::forget();
             gprl::hud::forget();
         }
     };
@@ -86,7 +92,10 @@ class $modify(GPRLPlayLayer, PlayLayer) {
     }
 
     void resetLevel() {
+        // a kill raised while the level resets belongs to no attempt (noclip-death-detector/2)
+        gprl::deathpath::resetBegin(this);
         PlayLayer::resetLevel();
+        gprl::deathpath::resetEnd(this);
         if (!enabled()) return;
         // the analyzer's attempt end first: the ending attempt's noclip flag is still the tracker's
         // open attempt; its next attempt starts after the tracker's (which reads the menus once for both)
@@ -102,16 +111,19 @@ class $modify(GPRLPlayLayer, PlayLayer) {
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {
-        // a hidden clone's death (or its touch of GD's anti-cheat spike) never reaches the game
-        if (enabled() && oracle::claimDestroy(this, player, object)) return;
-        bool wasDead = player && player->m_isDead;
-        PlayLayer::destroyPlayer(player, object);
-        if (enabled() && player) {
-            // the analyzer first (it reads the tracker's still-open attempt for the noclip flag)
-            analyzer::onDestroyPlayer(this, player, wasDead, player->m_isDead);
-            gprl::tracker::onDestroyPlayer(this, player, object, wasDead, player->m_isDead);
-            oracle::onRealDestroy(this, player, object, wasDead, player->m_isDead);
+        if (!enabled()) return PlayLayer::destroyPlayer(player, object);
+        // a hidden clone's death (or its touch of GD's anti-cheat spike) never reaches the game - also
+        // when the solver is not active for this layer: a clone must never run the level's death
+        if (oracle::claimDestroy(this, player, object) || oracle::isClone(player)) {
+            gprl::deathpath::cloneKill(this, player, object);
+            return;
         }
+        // noclip-death-detector/2: the facts before the game's death path, the path itself (every other
+        // mod's hook, then the game), then the verdict - a death, one would-be death per continuous
+        // lethal contact of the REAL player, or a rejection with its reason
+        auto pending = gprl::deathpath::begin(this, player, object);
+        PlayLayer::destroyPlayer(player, object);
+        gprl::deathpath::finish(this, pending);
     }
 
     void levelComplete() {
@@ -129,6 +141,7 @@ class $modify(GPRLPlayLayer, PlayLayer) {
             oracle::teardown();
             gprl::tracker::onQuit(this, true);
         }
+        gprl::deathpath::forget();
         gprl::hud::detach();
         m_fields->self = nullptr;
         PlayLayer::onQuit();
@@ -142,6 +155,7 @@ class $modify(GPRLPlayLayer, PlayLayer) {
         // after the solver's frame work: one read-only extraction slice + the frame-time sample
         analyzer::onFrame(this);
         gprl::hud::tick(dt);
+        gprl::deathpath::frame(this, dt);   // the death-debug overlay (nothing unless the setting is on)
     }
 
     // v0.12.0: the pause menu is a time the Record-Safe simulator may run (docs/BACKGROUND_ANALYZER_DESIGN.md §5).
@@ -259,20 +273,29 @@ class $modify(GPRLPlayer, PlayerObject) {
     }
 };
 
+namespace {
+/// v0.14.8 (owner 2026-10-03: the website's icon "the main icon for everything"): the GPRL
+/// button is the brand icon itself (gprl_icon.png, the website favicon rendered by
+/// branding/render_icon.py), `width` points wide whatever the file's pixel size; the old cyan
+/// "GPRL" circle only when the sprite is missing.
+CCNode* gprlButtonSprite(float width, CircleBaseSize fallbackSize, float fallbackLabelScale) {
+    if (auto* icon = CCSprite::create("gprl_icon.png"_spr)) {
+        float w = icon->getContentSize().width;
+        if (w > 0.f) icon->setScale(width / w);
+        return icon;
+    }
+    auto* label = CCLabelBMFont::create("GPRL", "bigFont.fnt");
+    label->setScale(fallbackLabelScale);
+    return CircleButtonSprite::create(label, CircleBaseColor::Cyan, fallbackSize);
+}
+}  // namespace
+
 // Main menu: the GPRL button in the bottom-left menu (node id "bottom-menu", set by Geode's own
-// MenuLayer hook) opens the same popup as the pause menu one. gprl_icon.png (mod resource, 64 px)
-// on a cyan circle; a "GPRL" label when the sprite is missing.
+// MenuLayer hook) opens the same popup as the pause menu one: the brand icon, 46 points wide.
 class $modify(GPRLMenuLayer, MenuLayer) {
     bool init() {
         if (!MenuLayer::init()) return false;
-        CCNode* top = CCSprite::create("gprl_icon.png"_spr);
-        if (top) top->setScale(0.75f);
-        else {
-            auto label = CCLabelBMFont::create("GPRL", "bigFont.fnt");
-            label->setScale(0.45f);
-            top = label;
-        }
-        auto spr = CircleButtonSprite::create(top, CircleBaseColor::Cyan, CircleBaseSize::MediumAlt);
+        auto spr = gprlButtonSprite(46.f, CircleBaseSize::MediumAlt, 0.45f);
         auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(GPRLMenuLayer::onGprl));
         btn->setID("gprl-button"_spr);
         if (auto menu = this->getChildByID("bottom-menu")) {
@@ -298,9 +321,8 @@ class $modify(GPRLPauseLayer, PauseLayer) {
     void customSetup() {
         PauseLayer::customSetup();
         if (!enabled()) return;
-        auto label = CCLabelBMFont::create("GPRL", "bigFont.fnt");
-        label->setScale(0.55f);
-        auto spr = CircleButtonSprite::create(label, CircleBaseColor::Cyan, CircleBaseSize::Small);
+        // v0.14.8: the brand icon here too (it was a "GPRL" label on a cyan circle)
+        auto spr = gprlButtonSprite(34.f, CircleBaseSize::Small, 0.55f);
         auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(GPRLPauseLayer::onGprl));
         btn->setID("gprl-button"_spr);
         if (auto menu = this->getChildByID("left-button-menu")) {

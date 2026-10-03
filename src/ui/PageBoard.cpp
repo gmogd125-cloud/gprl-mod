@@ -38,32 +38,33 @@ void GprlMenu::buildBoard() {
         foot = fmt::format("Your position: #{}", myPosition);
         footColor = kGreen;
     }
-    else foot = "Not on the board yet: your name appears once your sigma/s unlocks and your runs are verified";
-    text(m_page, foot, W / 2.f, 12.f, W - 20.f, footColor, 0.34f, kChat, {0.5f, 0.5f});
+    else foot = "Not on the board yet. It needs an unlocked sigma/s and verified runs.";
+    text(m_page, foot, W / 2.f, 11.f, W - 20.f, footColor, kSmall, kChat, {0.5f, 0.5f});
 
-    float const listW = W - 12.f, listH = H - 30.f;
+    float const listW = W - 2.f * kGap, listH = H - 22.f - kGap;
     auto scroll = ScrollLayer::create(CCSize{listW, listH});
-    scroll->setPosition({6.f, 24.f});
+    scroll->setPosition({kGap, 22.f});
     scroll->m_contentLayer->setLayout(ScrollLayer::createDefaultListLayout(2.f));
     m_page->addChild(scroll);
     float const rowW = listW - 2.f;
-    float const h = 24.f;
+    float const h = 26.f;
 
     for (auto const& row : board.rows) {
         bool you = st.connected && !st.username.empty() && row.username == st.username;
         auto node = CCNode::create();
         node->setContentSize({rowW, h});
-        panel(node, 0.f, 0.f, rowW, h, you ? ccColor3B{30, 90, 50} : kCard, you ? 240 : 200, -1);
+        panel(node, 0.f, 0.f, rowW, h, you ? ccColor3B{30, 90, 50} : kCard, you ? 245 : 200, -1);
         int pos = row.position;
         ccColor3B posColor = pos >= 1 && pos <= 3 ? kMedal[pos - 1] : kGold;
+        bool medalDrawn = false;
         if (pos == 1) {
-            if (auto* medal = icon("rankIcon_1_001.png", 18.f)) {
-                medal->setPosition({16.f, h / 2.f});
+            if (auto* medal = icon("rankIcon_1_001.png", 19.f)) {
+                medal->setPosition({18.f, h / 2.f});
                 node->addChild(medal);
+                medalDrawn = true;
             }
-            else text(node, "#1", 8.f, h / 2.f, 36.f, posColor, 0.38f, kGoldFont, {0.f, 0.5f});
         }
-        else text(node, fmt::format("#{}", pos), 8.f, h / 2.f, 36.f, posColor, pos <= 3 ? 0.4f : 0.36f, kGoldFont, {0.f, 0.5f});
+        if (!medalDrawn) text(node, fmt::format("#{}", pos), 8.f, h / 2.f, 36.f, posColor, 0.42f, kGoldFont, {0.f, 0.5f});
         ranks::Rank const* rank = nullptr;
         int division = 0;
         if (row.rank && list) {
@@ -71,15 +72,14 @@ void GprlMenu::buildBoard() {
             if (i >= 0) rank = &list->ranks[static_cast<size_t>(i)];
             division = row.rank->division;
         }
-        auto b = badge(rank, division, 20.f, false);
-        b->setPosition({56.f, h / 2.f});
+        auto b = badge(rank, division, 22.f, false);
+        b->setPosition({58.f, h / 2.f});
         node->addChild(b);
-        auto name = text(node, row.displayName, 72.f, h / 2.f, 150.f, you ? kGreen : kWhite, 0.36f, kBig, {0.f, 0.5f}, 0.15f);
-        (void)name;
+        text(node, row.displayName, 76.f, h / 2.f, 140.f, you ? kGreen : kWhite, 0.4f, kBig, {0.f, 0.5f}, 0.28f);
         std::string rankText = row.rank ? (rank ? ranks::bandName(*rank, division) : rankLabel(list, *row.rank)) : std::string();
-        if (!rankText.empty()) text(node, rankText, rowW - 70.f, h / 2.f, 86.f, rank ? toCc(rank->color) : kGrey, 0.36f, kChat, {1.f, 0.5f});
+        if (!rankText.empty()) text(node, rankText, rowW - 66.f, h / 2.f, 92.f, rank ? toCc(rank->color) : kGrey, kSmall, kChat, {1.f, 0.5f});
         std::string sigmaText = row.sigma ? ranks::formatSigma(*row.sigma) : std::string("-");
-        text(node, sigmaText, rowW - 8.f, h / 2.f, 58.f, kWhite, 0.36f, kBig, {1.f, 0.5f});
+        text(node, sigmaText, rowW - 8.f, h / 2.f, 54.f, kWhite, 0.4f, kBig, {1.f, 0.5f});
         scroll->m_contentLayer->addChild(node);
     }
     scroll->m_contentLayer->updateLayout();

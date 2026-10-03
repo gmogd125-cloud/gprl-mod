@@ -4,7 +4,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
 set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15)
 
-project(GPRL VERSION 0.14.7)
+project(GPRL VERSION 0.14.9)
 
 # core/ is pure C++20 (no Geode or cocos includes) and is compiled a second time by
 # tests/run_tests.ps1 with cl.exe on the host. Keep it that way.
@@ -16,6 +16,8 @@ set(GPRL_CORE_SOURCES
     core/calibration.cpp
     core/fingerprint.cpp
     core/classify.cpp
+    # noclip-death-detector/2 (docs/NOCLIP_DEATH_DETECTOR.md): the live death / would-be-death rules, pure
+    core/death_detector.cpp
     core/config.cpp
     core/identity.cpp
     core/ranks.cpp
@@ -63,6 +65,8 @@ set(GPRL_MOD_SOURCES
     src/Settings.cpp
     src/Hooks.cpp
     src/Tracker.cpp
+    # noclip-death-detector/2: live death path glue (identity, GD physics-step scope, debug log + overlay)
+    src/DeathPath.cpp
     src/Environment.cpp
     src/Telemetry.cpp
     src/Api.cpp

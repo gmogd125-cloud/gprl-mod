@@ -107,7 +107,6 @@ protected:
     cocos2d::CCNode* m_page = nullptr;      // the screen (local coordinates 0..kContentW x 0..kContentH)
     cocos2d::CCNode* m_header = nullptr;    // title + status chips
     cocos2d::CCNode* m_tileBg[kScreenCount] = {};
-    cocos2d::CCNode* m_tileAccent[kScreenCount] = {};
     cocos2d::CCNode* m_tileIcon[kScreenCount] = {};
     cocos2d::CCLabelBMFont* m_tileLabel[kScreenCount] = {};
     std::string m_pageKey;

@@ -7,6 +7,12 @@
 //   sidebar   x 8..84   : five icon tiles (Home, Ranks, Board, Level, Account) + the version
 //   header    y 268..296: the screen title (left) and the status chips (right)
 //   content   x 92..472, y 12..264 (380 x 252): the screen, drawn in its own local coordinates
+//
+// Type scale (owner feedback 2026-10-03: "some text is too small"). GD's fonts at scale 1 are
+// chatFont 18 px tall, goldFont 29, bigFont 35, so chatFont below 0.4 is under 7 px and hard to
+// read. Body text is 9 px; nothing a player has to read is smaller than 7 px, and a label that
+// does not fit shrinks to 80 % at most before it is cut with "..." (Widgets `text`); longer texts
+// wrap (`paragraph`).
 #include <Geode/Geode.hpp>
 
 namespace gprl::ui::theme {
@@ -29,6 +35,17 @@ constexpr float kContentW = 380.f;
 constexpr float kContentH = 252.f;
 constexpr float kHeaderY = 281.f;     // centre line of the header strip
 constexpr float kPad = 8.f;           // inner padding of cards
+constexpr float kGap = 5.f;           // margin around / between cards on a screen
+
+// chatFont scales (18 px at 1.0)
+constexpr float kBody = 0.5f;         // 9 px: what the player reads first
+constexpr float kSmall = 0.44f;       // 8 px: supporting lines
+constexpr float kTiny = 0.4f;         // 7 px: the least important line of a card
+constexpr float kLine = 11.f;         // distance between two body lines
+constexpr float kLineSmall = 10.f;
+constexpr float kTitle = 0.44f;       // goldFont card titles (13 px)
+constexpr float kTitleH = 18.f;       // room a card title takes from the card's top
+constexpr float kMinShrink = 0.8f;    // a label that does not fit shrinks to this share, then is cut
 
 // colours (the popup background is GD's blue square; panels are dark navy)
 constexpr ccColor3B kWhite{255, 255, 255};
@@ -45,7 +62,7 @@ constexpr ccColor3B kGreyBlue{150, 175, 215};   // the player's own private sigm
 constexpr ccColor3B kPanel{12, 16, 32};         // sidebar / content background
 constexpr ccColor3B kCard{30, 38, 66};          // cards inside the content
 constexpr ccColor3B kCardLight{44, 54, 90};
-constexpr ccColor3B kCardSelected{34, 96, 140};
+constexpr ccColor3B kCardSelected{40, 118, 172};
 constexpr ccColor3B kLiveRed{230, 40, 40};
 
 constexpr char const* kBig = "bigFont.fnt";

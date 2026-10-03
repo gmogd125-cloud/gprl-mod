@@ -18,6 +18,8 @@ namespace {
 
 using namespace theme;
 
+constexpr float kNote = 0.42f;   // chatFont 7.6 px: paragraphs inside narrow cards
+
 std::string num(std::optional<double> v) { return v ? ranks::formatSigma(*v) : std::string("-"); }
 
 /// "What to play next" while the rating is locked: the server's own words for the two counted
@@ -87,20 +89,20 @@ void GprlMenu::buildWelcome(client::Status const& st) {
     // hero: the sigma/s logo, a title and one sentence
     if (auto* logo = modSprite("gprl_icon.png")) {
         logo->setScale(56.f / std::max(1.f, logo->getContentSize().width));
-        logo->setPosition({38.f, H - 40.f});
+        logo->setPosition({38.f, H - 38.f});
         m_page->addChild(logo);
     }
-    text(m_page, "Welcome to GPRL", 74.f, H - 24.f, W - 110.f, kGold, 0.62f, kGoldFont, {0.f, 0.5f});
+    text(m_page, "Welcome to GPRL", 74.f, H - 22.f, W - 110.f, kGold, 0.62f, kGoldFont, {0.f, 0.5f});
     paragraph(m_page,
               "The Geometry Precision Ranking List measures how precisely you click: the exact timing window of every input, fitted into one number - "
               "your sigma/s - and a rank.",
-              74.f, H - 38.f, W - 100.f, 0.4f, kGrey);
+              74.f, H - 36.f, W - 74.f - 28.f, kBody, kGrey, 3);
 
     // three steps
     float const gap = 8.f;
-    float const cardW = (W - 2.f * gap - 2.f * gap) / 3.f;
-    float const cardH = 92.f;
-    float const cardY = 66.f;
+    float const cardW = (W - 4.f * gap) / 3.f;
+    float const cardH = 96.f;
+    float const cardY = 62.f;
     struct Step {
         char const* title;
         char const* icon;
@@ -114,19 +116,19 @@ void GprlMenu::buildWelcome(client::Status const& st) {
     for (int i = 0; i < 3; ++i) {
         float x = gap + static_cast<float>(i) * (cardW + gap);
         auto c = card(m_page, x, cardY, cardW, cardH, nullptr, kCard, 230);
-        if (auto* ic = icon(steps[i].icon, 22.f)) {
-            ic->setPosition({16.f, cardH - 16.f});
+        if (auto* ic = icon(steps[i].icon, 20.f)) {
+            ic->setPosition({15.f, cardH - 15.f});
             c->addChild(ic);
         }
-        text(c, steps[i].title, 30.f, cardH - 16.f, cardW - 36.f, kGold, 0.42f, kGoldFont, {0.f, 0.5f});
-        paragraph(c, steps[i].body, 8.f, cardH - 30.f, cardW - 16.f, 0.33f, kWhite);
+        text(c, steps[i].title, 29.f, cardH - 15.f, cardW - 35.f, kGold, 0.42f, kGoldFont, {0.f, 0.5f});
+        paragraph(c, steps[i].body, 7.f, cardH - 28.f, cardW - 14.f, kSmall, kWhite, 6);
     }
 
     // the one thing to do
     auto menu = pageMenu();
     bool busy = connect::inProgress() || st.connecting;
-    auto btn = wideButton(menu, busy ? "Connecting..." : "Connect with my GD account", 230, "GJ_button_01.png", 0.7f, this, menu_selector(GprlMenu::onConnect));
-    btn->setPosition({W / 2.f, 40.f});
+    auto btn = wideButton(menu, busy ? "Connecting..." : "Connect with my GD account", 250.f, "GJ_button_01.png", 28.f, this, menu_selector(GprlMenu::onConnect));
+    btn->setPosition({W / 2.f, 38.f});
     setButtonEnabled(btn, !busy);
     auto info = iconButton(menu, "GJ_infoIcon_001.png", 18.f, this, menu_selector(GprlMenu::onWhatIsSigma));
     info->setPosition({W - 14.f, H - 14.f});
@@ -148,7 +150,7 @@ void GprlMenu::buildWelcome(client::Status const& st) {
         color = kOrange;
     }
     else status = identity::describe(st.connection, "");
-    text(m_page, status, W / 2.f, 14.f, W - 20.f, color, 0.36f, kChat, {0.5f, 0.5f});
+    text(m_page, status, W / 2.f, 12.f, W - 20.f, color, kSmall, kChat, {0.5f, 0.5f});
 }
 
 // ---- profile (connected) ----
@@ -181,7 +183,6 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
     std::string displayName = p && !p->displayName.empty() ? p->displayName : st.displayName;
     bool const gdVerified = p ? p->identityVerified : st.identityVerified;
     std::string priv = privateSigmaProfileText(disp);
-    std::string privNote = priv.empty() ? std::string() : privateSigmaNoteText(disp, list ? list->eligibilityMinConfidence : std::nullopt);
     std::optional<ranks::Progress> progress;
     if (p) progress = ranks::profileProgress(*p, list);
     std::string hint;
@@ -204,17 +205,20 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
     for (auto const& s : steps) key += "|" + s;
     key += "|" + missingLock;
     key += "|" + sessionNote;
+    key += st.serverCalibration ? "|server" : "|local";
     if (p) {
         for (auto const& g : p->gamemodes) key += fmt::format("|{}:{}", g.sigma ? *g.sigma : -1.0, g.calibrationProgress);
     }
     if (!beginPage(key)) return;
     float const W = kContentW, H = kContentH;
     auto menu = pageMenu();
+    float const stripH = 60.f;
+    float const stripTop = kGap + stripH;
 
     // ---- left column: the badge and the rank ----
     float const leftCx = 64.f;
     auto b = badge(rank, division, 92.f, !p && !rank);
-    b->setPosition({leftCx, H - 60.f});
+    b->setPosition({leftCx, H - 56.f});
     m_page->addChild(b);
     std::string rankText;
     ccColor3B rankColor = kDim;
@@ -227,79 +231,77 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
         rankColor = kWhite;
     }
     else rankText = "Unranked";
-    text(m_page, rankText, leftCx, H - 116.f, 118.f, rankColor, 0.46f, kGoldFont, {0.5f, 0.5f});
+    text(m_page, rankText, leftCx, H - 112.f, 120.f, rankColor, 0.48f, kGoldFont, {0.5f, 0.5f});
     if (progress) {
-        text(m_page, fmt::format("to {}  {}%", progress->nextName, static_cast<int>(std::floor(progress->percent + 1e-9))), leftCx, H - 130.f, 118.f, kGrey, 0.33f, kChat,
+        text(m_page, fmt::format("to {}  {}%", progress->nextName, static_cast<int>(std::floor(progress->percent + 1e-9))), leftCx, H - 126.f, 120.f, kGrey, kTiny, kChat,
              {0.5f, 0.5f});
         auto pb = bar(104.f, 6.f, progress->percent / 100.0, kCyan);
-        pb->setPosition({leftCx - 52.f, H - 140.f});
+        pb->setPosition({leftCx - 52.f, H - 136.f});
         m_page->addChild(pb);
     }
-    else if (!hint.empty()) paragraph(m_page, hint, 10.f, H - 124.f, 108.f, 0.32f, kGold);
-    else if (!sigmaVisible) text(m_page, "calibrating", leftCx, H - 130.f, 118.f, kDim, 0.33f, kChat, {0.5f, 0.5f});
+    else if (!hint.empty()) paragraph(m_page, hint, 6.f, H - 121.f, 116.f, kTiny, kGold, 3, kCCTextAlignmentCenter);
+    else if (!sigmaVisible) text(m_page, "calibrating", leftCx, H - 126.f, 120.f, kDim, kTiny, kChat, {0.5f, 0.5f});
     if (!p) {
         std::string state = site.profileNotFound ? "No GPRL profile yet" : (!site.profileState.error.empty() ? "Profile unavailable" : "Loading profile...");
-        text(m_page, state, leftCx, H - 152.f, 118.f, site.profileNotFound ? kGold : kDim, 0.33f, kChat, {0.5f, 0.5f});
+        text(m_page, state, leftCx, H - 148.f, 120.f, site.profileNotFound ? kGold : kDim, kTiny, kChat, {0.5f, 0.5f});
     }
 
     // ---- right column: the player and the number ----
     float const rx = 134.f;
-    float const rw = W - rx - 10.f;
-    auto nameLabel = text(m_page, displayName, rx, H - 12.f, 130.f, kWhite, 0.5f, kBig, {0.f, 0.5f}, 0.3f);
+    float const rw = W - rx - 8.f;
+    auto nameLabel = text(m_page, displayName, rx, H - 13.f, 126.f, kWhite, 0.5f, kBig, {0.f, 0.5f}, 0.3f);
     auto vchip = chip(gdVerified ? "GD verified" : "GD not verified", gdVerified ? ccColor3B{30, 110, 60} : ccColor3B{140, 80, 40}, kWhite, 0.28f);
-    vchip->setPosition({rx + nameLabel->getScaledContentSize().width + 8.f, H - 12.f});
+    vchip->setPosition({rx + nameLabel->getScaledContentSize().width + 8.f, H - 13.f});
     m_page->addChild(vchip);
     auto info = iconButton(menu, "GJ_infoIcon_001.png", 16.f, this, menu_selector(GprlMenu::onWhatIsSigma));
-    info->setPosition({W - 12.f, H - 12.f});
+    info->setPosition({W - 12.f, H - 13.f});
 
     if (!sigmaVisible) {
         // the calibration ring and what to play next
         auto r = ring(27.f, 6.f, cal.percent, kCyan, {0, 0, 0}, 160);
-        r->setPosition({rx + 30.f, H - 62.f});
+        r->setPosition({rx + 29.f, H - 60.f});
         m_page->addChild(r);
-        text(m_page, percent(cal.percent), rx + 30.f, H - 62.f, 40.f, kWhite, 0.34f, kBig, {0.5f, 0.5f});
-        text(m_page, "Calibrating", rx + 66.f, H - 44.f, rw - 66.f, kGold, 0.5f, kGoldFont, {0.f, 0.5f});
-        text(m_page,
-             fmt::format("{} of {} effective timings  -  {} of {} gamemodes", static_cast<int>(std::floor(cal.effectiveSamples.current + 1e-9)),
-                         static_cast<int>(cal.effectiveSamples.required), static_cast<int>(cal.gamemodes.current), static_cast<int>(cal.gamemodes.required)),
-             rx + 66.f, H - 62.f, rw - 66.f, kWhite, 0.36f, kChat, {0.f, 0.5f});
-        text(m_page,
-             !st.serverCalibration     ? std::string("sigma/s LOCKED - waiting for the server's calibration state")
-             : !missingLock.empty()    ? missingLock
-                                       : std::string("sigma/s LOCKED until the calibration completes"),
-             rx + 66.f, H - 76.f, rw - 66.f, kGrey, 0.33f, kChat, {0.f, 0.5f});
-        float y = H - 98.f;
-        if (!priv.empty()) {
-            text(m_page, priv, rx, y, rw, kGreyBlue, 0.34f, kChat, {0.f, 0.5f});
-            y -= 10.f;
-            if (!privNote.empty()) {
-                text(m_page, privNote, rx, y, rw, kGreyBlue, 0.3f, kChat, {0.f, 0.5f});
-                y -= 10.f;
-            }
-        }
-        // "what to play next" card fills the room down to the gamemode strip
-        float const cardTop = y - 4.f, cardBottom = 72.f;
-        if (cardTop - cardBottom > 30.f) {
-            auto c = card(m_page, rx, cardBottom, rw, cardTop - cardBottom, "What to play next", kCard, 230);
-            float ty = cardTop - cardBottom - 16.f;
+        text(m_page, percent(cal.percent), rx + 29.f, H - 60.f, 40.f, kWhite, 0.36f, kBig, {0.5f, 0.5f});
+        float const tx = rx + 64.f, tw = rw - 64.f;
+        text(m_page, "Calibrating", tx, H - 42.f, tw, kGold, 0.5f, kGoldFont, {0.f, 0.5f});
+        text(m_page, fmt::format("{} of {} effective timings", static_cast<int>(std::floor(cal.effectiveSamples.current + 1e-9)), static_cast<int>(cal.effectiveSamples.required)),
+             tx, H - 58.f, tw, kWhite, kBody, kChat, {0.f, 0.5f});
+        text(m_page, fmt::format("{} of {} gamemodes", static_cast<int>(cal.gamemodes.current), static_cast<int>(cal.gamemodes.required)), tx, H - 70.f, tw, kWhite, kBody,
+             kChat, {0.f, 0.5f});
+        float top = H - 92.f;
+        std::string lockText = !st.serverCalibration ? std::string("sigma/s LOCKED - waiting for the server's calibration state")
+                               : !missingLock.empty() ? missingLock
+                                                      : std::string("sigma/s LOCKED until the calibration completes");
+        top -= paragraph(m_page, lockText, rx, top, rw, kSmall, kGrey, 2)->getHeight() + 4.f;
+        if (!priv.empty()) top -= paragraph(m_page, priv, rx, top, rw, kNote, kGreyBlue, 2)->getHeight() + 4.f;
+        // "what to play next" fills the room down to the gamemode strip
+        float const cardBottom = stripTop + kGap;
+        float const cardH = top - cardBottom;
+        if (cardH >= 36.f) {
+            auto c = card(m_page, rx, cardBottom, rw, cardH, "What to play next", kCard, 230);
+            float ty = cardH - kTitleH;
             if (!sessionNote.empty()) {
-                auto para = paragraph(c, "! " + sessionNote, kPad, ty, rw - 2.f * kPad, 0.3f, kOrange);
-                ty -= para->getHeight() + 3.f;
+                auto para = makeParagraph("! " + sessionNote, rw - 2.f * kPad, kNote, kOrange, 3);
+                if (ty - para->getHeight() >= 4.f) {
+                    place(c, para, kPad, ty);
+                    ty -= para->getHeight() + 4.f;
+                }
             }
             for (auto const& s : steps) {
-                if (ty < 6.f) break;
-                auto para = paragraph(c, "- " + s, kPad, ty, rw - 2.f * kPad, 0.33f, kWhite);
-                ty -= para->getHeight() + 3.f;
-                if (ty < 6.f) break;
+                if (ty < 14.f) break;
+                auto para = makeParagraph("- " + s, rw - 2.f * kPad, kNote, kWhite, 3);
+                if (ty - para->getHeight() < 4.f) break;
+                place(c, para, kPad, ty);
+                ty -= para->getHeight() + 4.f;
             }
         }
     }
     else {
         // the hero number
-        auto big = text(m_page, num(headline), rx, H - 44.f, 130.f, kWhite, 0.95f, kBig, {0.f, 0.5f});
-        text(m_page, "sigma/s", rx + big->getScaledContentSize().width + 6.f, H - 50.f, 60.f, kGold, 0.42f, kGoldFont, {0.f, 0.5f});
+        auto big = text(m_page, num(headline), rx, H - 46.f, 130.f, kWhite, 0.95f, kBig, {0.f, 0.5f});
+        text(m_page, "sigma/s", rx + big->getScaledContentSize().width + 6.f, H - 52.f, 70.f, kGold, 0.45f, kGoldFont, {0.f, 0.5f});
         float cx = rx;
-        float const chipY = H - 72.f;
+        float const chipY = H - 76.f;
         if (confidence) {
             auto c = chip(fmt::format("{} confidence", ranks::percentText(*confidence)), {30, 90, 130}, kWhite, 0.3f);
             c->setPosition({cx, chipY});
@@ -311,7 +313,6 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
             auto c = chip(disp.verificationLabel, ccColor3B{static_cast<GLubyte>(vc.r / 3), static_cast<GLubyte>(vc.g / 3), static_cast<GLubyte>(vc.b / 3)}, vc, 0.3f);
             c->setPosition({cx, chipY});
             m_page->addChild(c);
-            cx += c->getContentSize().width + 5.f;
         }
         else if (p && p->competitiveVerified) {
             auto c = chip(*p->competitiveVerified ? "Competitive Verified" : "Not yet verified", *p->competitiveVerified ? ccColor3B{30, 110, 60} : ccColor3B{140, 80, 40},
@@ -319,41 +320,37 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
             c->setPosition({cx, chipY});
             m_page->addChild(c);
         }
-        float y = H - 88.f;
-        if (disp.provisional && !disp.provisionalLabel.empty()) {
-            text(m_page, disp.provisionalLabel, rx, y, rw, kGold, 0.34f, kChat, {0.f, 0.5f});
-            y -= 12.f;
-        }
-        text(m_page, fmt::format("raw {}   practical {}", num(raw), num(practical)), rx, y, rw, kGrey, 0.36f, kChat, {0.f, 0.5f});
-        y -= 12.f;
-        if (!priv.empty()) {
-            text(m_page, priv, rx, y, rw, kGreyBlue, 0.33f, kChat, {0.f, 0.5f});
-            y -= 11.f;
-        }
-        if (p) {
+        float top = H - 88.f;
+        float const floorY = stripTop + 6.f;
+        if (disp.provisional && !disp.provisionalLabel.empty()) top -= paragraph(m_page, disp.provisionalLabel, rx, top, rw, kSmall, kGold, 2)->getHeight() + 4.f;
+        text(m_page, fmt::format("raw {}   practical {}", num(raw), num(practical)), rx, top - 4.5f, rw, kGrey, kBody, kChat, {0.f, 0.5f});
+        top -= 13.f;
+        if (!priv.empty() && top > floorY + 18.f) top -= paragraph(m_page, priv, rx, top, rw, kNote, kGreyBlue, 2)->getHeight() + 4.f;
+        if (p && top > floorY + 9.f) {
             std::string board = p->leaderboardPosition > 0 ? fmt::format("Leaderboard #{}", p->leaderboardPosition) : std::string("Not on the leaderboard yet");
-            text(m_page, fmt::format("{}   -   {} verified run{}", board, p->verifiedRuns, p->verifiedRuns == 1 ? "" : "s"), rx, y, rw, kGrey, 0.36f, kChat, {0.f, 0.5f});
-            y -= 12.f;
-            if (p->unverifiedRankEquivalent) text(m_page, "Provisional rank equivalent: " + rankLabel(list, *p->unverifiedRankEquivalent), rx, y, rw, kGrey, 0.33f, kChat, {0.f, 0.5f});
+            text(m_page, fmt::format("{}   -   {} verified run{}", board, p->verifiedRuns, p->verifiedRuns == 1 ? "" : "s"), rx, top - 4.5f, rw, kGrey, kSmall, kChat,
+                 {0.f, 0.5f});
+            top -= 12.f;
+            if (p->unverifiedRankEquivalent && top > floorY + 8.f)
+                text(m_page, "Provisional rank equivalent: " + rankLabel(list, *p->unverifiedRankEquivalent), rx, top - 4.f, rw, kGrey, kTiny, kChat, {0.f, 0.5f});
         }
     }
 
     // ---- bottom strip: the 8 gamemodes ----
-    float const stripH = 60.f;
-    auto strip = card(m_page, 6.f, 6.f, W - 12.f, stripH, sigmaVisible ? "Gamemodes (verified sigma/s)" : "Gamemodes (calibration)", kCard, 230);
-    float const colW = (W - 12.f - 2.f * kPad) / static_cast<float>(kGamemodeCount);
+    auto strip = card(m_page, kGap, kGap, W - 2.f * kGap, stripH, sigmaVisible ? "Gamemodes (verified sigma/s)" : "Gamemodes (calibration)", kCard, 230);
+    float const colW = (W - 2.f * kGap - 2.f * kPad) / static_cast<float>(kGamemodeCount);
     for (int i = 0; i < kGamemodeCount; ++i) {
         float cx = kPad + colW * (static_cast<float>(i) + 0.5f);
         ranks::GamemodeRating const* g = p && i < static_cast<int>(p->gamemodes.size()) ? &p->gamemodes[static_cast<size_t>(i)] : nullptr;
         bool lit = g && g->sigma.has_value();
         auto ic = gamemodeIcon(i, 15.f, lit);
-        ic->setPosition({cx, stripH - 22.f});
+        ic->setPosition({cx, stripH - 25.f});
         strip->addChild(ic);
         std::string value = g ? (g->sigma ? ranks::formatSigma(*g->sigma) : (g->calibrationProgress > 0.0 ? percent(g->calibrationProgress) : "-")) : "-";
-        text(strip, value, cx, stripH - 36.f, colW - 4.f, lit ? kWhite : (g && g->calibrationProgress > 0.0 ? kGrey : kDim), 0.3f, kBig, {0.5f, 0.5f});
+        text(strip, value, cx, 20.f, colW - 4.f, lit ? kWhite : (g && g->calibrationProgress > 0.0 ? kGrey : kDim), 0.3f, kBig, {0.5f, 0.5f});
         double fill = g ? (g->sigma ? std::clamp(*g->sigma / 300.0, 0.0, 1.0) : g->calibrationProgress) : 0.0;
         auto gb = bar(colW - 10.f, 4.f, fill, lit ? kGreen : kBlue, {0, 0, 0}, 140);
-        gb->setPosition({cx - (colW - 10.f) / 2.f, 8.f});
+        gb->setPosition({cx - (colW - 10.f) / 2.f, 9.f});
         strip->addChild(gb);
     }
 }

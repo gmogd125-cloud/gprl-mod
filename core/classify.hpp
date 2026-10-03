@@ -136,6 +136,13 @@ private:
 };
 
 // ---- deaths (SPEC §19) ----
+//
+// v0.14.9: the tracker no longer uses classifyDestroy / WouldBeDeathStreak. Deaths and would-be
+// deaths are judged by core/death_detector (`noclip-death-detector/2`: strict live-player identity,
+// generations, GD's own physics-step scope, one would-be death per continuous lethal contact PER
+// PLAYER, the out-of-bounds re-arm). The functions below are the v0.14.1 rules, kept because
+// tests/fixtures/classification/death-classification.json pins them on both sides;
+// `tickFromProgress` is still THE tick unit of the detector.
 
 enum class DestroyVerdict : uint8_t {
     Ignore,         // not an attempt death (no open attempt, already dead, other mods' clones, GD's anti-cheat spike)

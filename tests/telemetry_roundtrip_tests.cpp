@@ -1720,6 +1720,89 @@ void testTimingResultFixture080() {
     }
 }
 
+/// tests/fixtures/telemetry/batch-death-detector.json (geode 0.14.9, noclip-death-detector/2): the
+/// optional death fields parse, validate, re-serialise to the same bytes and re-canonicalise to the
+/// TypeScript reference; older goldens stay free of them.
+void testDeathDetectorFixture() {
+    SECTION("death detector golden: detector / source / player / hazardType / contactId / attemptGeneration");
+    std::string text = fixture("telemetry/batch-death-detector.json");
+    std::string expectedText = fixture("telemetry/batch-death-detector.expected.json");
+    CHECK_MSG(!text.empty() && !expectedText.empty(), "batch-death-detector golden missing");
+    if (text.empty() || expectedText.empty()) return;
+    json::Value expected;
+    CHECK(json::parse(expectedText, expected));
+    Batch batch;
+    std::string err;
+    bool parsed = parseBatch(text, batch, &err);
+    CHECK_MSG(parsed, err);
+    if (!parsed) return;
+    CHECK(batch.events.size() == 8);
+    CHECK(batch.clientBuild == "gprl-geode 0.14.9+win");
+    CHECK_MSG(validateBatch(batch, &err), err);
+    CHECK_MSG(checkBatchInvariants(batch, -1, {}, &err), err);
+
+    std::string canonical = canonicalBody(batch);
+    CHECK(canonical.size() == static_cast<size_t>(expected.getInt("canonicalLength")));
+    CHECK_MSG(canonical == expected.getString("canonical"), "canonical bytes differ");
+    CHECK(crypto::toHex(crypto::sha256(canonical)) == expected.getString("canonicalSha256"));
+    std::string key;
+    CHECK(crypto::fromHex(expected["hmac"].getString("keyHex"), key));
+    CHECK(crypto::toHex(crypto::hmacSha256(key, canonical)) == expected["hmac"].getString("signatureHex"));
+
+    json::Value original;
+    CHECK(json::parse(text, original));
+    CHECK(toJson(batch) == original);
+    std::string pretty = serializeBatch(batch, true) + "\n";
+    std::string normalized = text;
+    std::string::size_type pos = 0;
+    while ((pos = normalized.find("\r\n", pos)) != std::string::npos) normalized.replace(pos, 2, "\n");
+    CHECK_MSG(pretty == normalized, "pretty layout differs from the fixture");
+
+    // decoded payloads: one would-be death per lethal contact, each with its real player
+    auto const& spike = std::get<DeathPayload>(batch.events[1].payload);
+    CHECK(spike.wouldBe && spike.detector == "noclip-death-detector/2" && spike.source == "live_gd_death");
+    CHECK(spike.player == 1 && spike.hazardType == 2 && spike.contactId == 1 && spike.attemptGeneration == 41 && spike.objectId == 8);
+    auto const& crush = std::get<DeathPayload>(batch.events[2].payload);
+    CHECK(crush.wouldBe && crush.player == 2 && crush.hazardType == -1 && crush.contactId == 2 && crush.objectId == 0);
+    auto const& saw = std::get<DeathPayload>(batch.events[3].payload);
+    CHECK(saw.player == 1 && saw.contactId == 3 && saw.objectId == 1705);
+    auto const& real = std::get<DeathPayload>(batch.events[6].payload);
+    CHECK(!real.wouldBe && real.contactId == 0 && real.attemptGeneration == 42 && real.source == "live_gd_death");
+
+    // the validator: only an accepted death of a real live player is ever sent
+    Batch bad = batch;
+    std::get<DeathPayload>(bad.events[1].payload).source = "rejected_clone";
+    CHECK(!validateBatch(bad, &err));
+    bad = batch;
+    std::get<DeathPayload>(bad.events[1].payload).source = "external_kill";   // a would-be death is a live_gd_death
+    CHECK(!validateBatch(bad, &err));
+    bad = batch;
+    std::get<DeathPayload>(bad.events[6].payload).source = "external_kill";   // a real death may be
+    CHECK_MSG(validateBatch(bad, &err), err);
+    bad = batch;
+    std::get<DeathPayload>(bad.events[2].payload).player = 0;
+    CHECK(!validateBatch(bad, &err));
+    bad = batch;
+    std::get<DeathPayload>(bad.events[3].payload).contactId = 0;
+    CHECK(!validateBatch(bad, &err));
+    bad = batch;
+    std::get<DeathPayload>(bad.events[6].payload).attemptGeneration = 0;
+    CHECK(!validateBatch(bad, &err));
+
+    // an older build's death (no detector) writes none of the keys, and the older goldens have none
+    Batch old = batch;
+    std::get<DeathPayload>(old.events[1].payload).detector.clear();
+    std::string oldText = serializeBatch(old, false);
+    Batch back;
+    CHECK_MSG(parseBatch(oldText, back, &err), err);
+    auto const& legacy = std::get<DeathPayload>(back.events[1].payload);
+    CHECK(legacy.detector.empty() && legacy.source.empty() && legacy.player == 0 && legacy.hazardType == -1 && legacy.contactId == 0);
+    for (char const* older : {"telemetry/batch-basic.json", "telemetry/batch-capture.json", "telemetry/batch-timing-result-v0140.json"}) {
+        std::string olderText = fixture(older);
+        CHECK_MSG(olderText.find("\"detector\"") == std::string::npos && olderText.find("contactId") == std::string::npos, older);
+    }
+}
+
 int main(int argc, char** argv) {
     g_root = argc > 1 ? argv[1] : "D:/GPRL";
     testNumberFormatting();
@@ -1737,5 +1820,6 @@ int main(int argc, char** argv) {
     testTimingResultFixture071();
     testTimingResultFixture080();
     testTimingResultFixture0140();
+    testDeathDetectorFixture();
     return gprl::test::finish("telemetry_roundtrip_tests");
 }

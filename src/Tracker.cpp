@@ -49,7 +49,6 @@ struct Attempt {
     double fromPercent = 0.0;
     bool practice = false;
     bool noclipSeen = false;      // noclip on at any poll of this attempt, or a would-be death (SPEC §19)
-    classify::WouldBeDeathStreak wouldBe;   // v0.10.0: one would-be death per contiguous run of swallowed destroys (Eclipse's rule)
     bool untrustedSeen = false;   // any poll of this attempt classified the environment as not Allowed
     int inputs = 0;
     double baseLevelTime = 0.0;   // m_levelTime at the attempt start (StartPos time)
@@ -80,6 +79,10 @@ struct State {
     std::string sessionLocalId;
     int sessionAttempts = 0;
     Attempt attempt;
+    // noclip-death-detector/2 (core/death_detector): the only judge of deaths / would-be deaths.
+    // One would-be death per continuous lethal contact of a real live player (v0.10.0 Eclipse rule,
+    // v0.14.1 tick units), per player, stamped with the generations below
+    death::Detector detector;
     Gamemode lastMode[3] = {Gamemode::Cube, Gamemode::Cube, Gamemode::Cube};
     PortalMemory portal[3];
     classify::SubTickClock clock;   // player 1's update deltas inside the current tick (core/classify)
@@ -98,6 +101,11 @@ struct State {
 
 /// Session tab / HUD counters: outlive `s` (kept after the level is left, reset on the next entry).
 SessionCounters s_counters;
+
+/// Generations (noclip-death-detector/2): outlive `s` and only ever grow, so a kill raised in an
+/// earlier attempt / level session can never be mistaken for the current one.
+uint32_t s_sessionGen = 0;
+uint32_t s_attemptGen = 0;
 
 int64_t currentTick(PlayLayer* pl) { return static_cast<int64_t>(pl->m_gameState.m_currentProgress / 2u); }
 double currentLevelTime(PlayLayer* pl) { return pl->m_gameState.m_levelTime; }
@@ -173,6 +181,12 @@ void endAttempt(AttemptEndReason reason, bool completed, double percent) {
     e.payload = p;
     emit(std::move(e));
     s.attempt.open = false;
+    s.detector.endAttempt();   // a kill that arrives from here on is stale
+    if (auto const& dc = s.detector.counters(); dc.totalWouldBe() || dc.rejectedStale || dc.rejectedNotLethal || dc.simulated || dc.rejectedUnknownPlayer) {
+        GPRL_DEBUG("GPRL death: attempt {} summary: deaths {}, would-be P1 {} / P2 {} (+{} same-contact kills), rejected: clone {}, stale {}, unknown player {}, not lethal {}, simulated {}",
+                   s.attempt.id, dc.deaths, dc.wouldBeDeaths[1], dc.wouldBeDeaths[2], dc.continued, dc.rejectedClone, dc.rejectedStale, dc.rejectedUnknownPlayer,
+                   dc.rejectedNotLethal, dc.simulated);
+    }
     // v0.6.0 clipping buffer: the attempt's range ends here; an exceptional run is preserved for the
     // player's choice (src/Clipper, core/clip decidePreserve). No-op while clipping is off.
     clipper::onAttemptEnd(s.attempt.id, completed, p.percent, legit, endT, endTick);
@@ -243,6 +257,7 @@ void startAttempt(PlayLayer* pl, bool firstOfSession, telemetry::EnvironmentPayl
     a.lastFrameAt = a.startedAt;
     a.haveLastFrame = true;
     s.attempt = a;
+    s.detector.beginAttempt(++s_attemptGen);
     ++s_counters.attempts;
     s_counters.practice = a.practice;
     s_counters.currentPercent = a.fromPercent;
@@ -341,6 +356,7 @@ void onLevelEnter(PlayLayer* pl) {
     if (s.pl) onQuit(s.pl, false);
     s = State{};
     s.pl = pl;
+    s.detector.beginSession(++s_sessionGen);
     s_counters = SessionCounters{};
     s_counters.levelOpen = true;
     s_counters.levelName = std::string(pl->m_level->m_levelName);
@@ -490,22 +506,35 @@ void onGamemodeToggle(PlayerObject* p) {
     emit(std::move(e));
 }
 
-void onDestroyPlayer(PlayLayer* pl, PlayerObject* player, GameObject* object, bool wasDead, bool isDead) {
-    if (pl != s.pl) return;
-    classify::DestroyFacts facts;
-    facts.attemptOpen = s.attempt.open;
-    facts.wasDeadBefore = wasDead;
-    facts.playerSlot = slotOf(pl, player);   // 0 = other mods' clones
-    facts.anticheatSpike = object && pl->m_anticheatSpike && object == pl->m_anticheatSpike;   // GD_PHYSICS_NOTES
-    facts.deadAfter = isDead;
-    auto verdict = classify::classifyDestroy(facts);
-    if (verdict == classify::DestroyVerdict::Ignore) return;
-    // a noclip menu swallows the destroy on every tick inside the hazard (and once per hazard
-    // touched in a tick); like Eclipse's counter, a death is one contiguous run of TICKS
-    // (v0.14.1: m_currentProgress advances 2 per tick, hence tickFromProgress)
-    if (verdict == classify::DestroyVerdict::WouldBeDeath
-        && !classify::startsWouldBeDeath(s.attempt.wouldBe, classify::tickFromProgress(static_cast<int64_t>(pl->m_gameState.m_currentProgress))))
+Generation generation() {
+    Generation g;
+    g.session = s.pl ? s.detector.sessionGen() : 0;
+    g.attempt = s.pl ? s.detector.attemptGen() : 0;
+    g.open = s.pl && s.attempt.open;
+    return g;
+}
+
+death::Verdict judgeDeath(PlayLayer* pl, death::Candidate const& candidate) {
+    if (!pl || pl != s.pl) {
+        // not the tracked level session's layer: whatever this is, it is not the current attempt's
+        death::Verdict stale;
+        stale.reason = death::Reason::StaleSession;
+        stale.source = death::Source::RejectedStaleAttempt;
+        return stale;
+    }
+    return s.detector.onCandidate(candidate);
+}
+
+void applyDeath(PlayLayer* pl, death::Verdict const& verdict, death::Candidate const& candidate, PlayerObject* player, GameObject* object) {
+    if (pl != s.pl || !verdict.accepted() || !player) return;
+    if (verdict.decision == death::Decision::ContinuesContact) {
+        // the same lethal contact goes on (a noclip menu swallows the kill on every tick inside the
+        // hazard): no new death, the attempt stays marked
+        s.attempt.noclipSeen = true;
+        s_counters.noclipSeen = true;
         return;
+    }
+    if (!s.attempt.open) return;   // never emit into a closed attempt
     double percent = currentPercent(pl);
     s.attempt.lastKnownPercent = percent;
     Event e = makeEvent();
@@ -513,10 +542,18 @@ void onDestroyPlayer(PlayLayer* pl, PlayerObject* player, GameObject* object, bo
     d.percent = percent;
     d.x = player->getPositionX();
     d.objectId = object ? std::max(0, object->m_objectID) : 0;
-    d.wouldBe = verdict == classify::DestroyVerdict::WouldBeDeath;
+    d.wouldBe = verdict.decision == death::Decision::WouldBeDeath;
+    // noclip-death-detector/2 fields (docs/TELEMETRY.md §12): which detector judged it, the death
+    // source, the real player it belongs to, the lethal contact and the attempt generation
+    d.detector = death::kDetectorVersion;
+    d.source = death::name(verdict.source);
+    d.player = verdict.player;
+    d.hazardType = object ? static_cast<int>(object->m_objectType) : -1;
+    d.contactId = static_cast<int>(verdict.contactId);
+    d.attemptGeneration = static_cast<int64_t>(candidate.attemptGen);
     e.payload = d;
     emit(std::move(e));
-    if (verdict == classify::DestroyVerdict::Death) {
+    if (verdict.decision == death::Decision::Death) {
         ++s_counters.deaths;
         s_counters.currentPercent = percent;
         endAttempt(AttemptEndReason::Death, false, percent);
@@ -527,6 +564,8 @@ void onDestroyPlayer(PlayLayer* pl, PlayerObject* player, GameObject* object, bo
         s_counters.noclipSeen = true;
     }
 }
+
+death::Counters deathCounters() { return s.detector.counters(); }
 
 void onLevelComplete(PlayLayer* pl) {
     if (pl != s.pl || !s.attempt.open) return;
