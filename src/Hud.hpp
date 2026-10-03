@@ -13,6 +13,7 @@
 // middle-left panel with the AUDIT §11 fields (trace_view panelLines). Drawing only; physics is
 // never touched.
 #include <Geode/Geode.hpp>
+#include <Geode/ui/Notification.hpp>
 
 #include "../core/solver/trace_view.hpp"
 
@@ -37,8 +38,17 @@ void showTrace(solver::trace_view::View view);
 /// the popup's Session tab.
 solver::trace_view::View const& lastTrace();
 
-/// v0.9.0 (owner decision 2026-10-01): a top-right "!" notification on the running scene (level,
-/// end screen or menu; independent of Show HUD): "Verify this run ...". Fades out after `seconds`.
+/// v0.14.5: every GPRL notification, top right in the verification notice's panel (owner
+/// 2026-10-03): a pulsing blue "i" for information, the red "!" for warnings. On Geode's overlay
+/// (survives scene changes); several stack downward under the sigma/s panel. Main thread only.
+enum class ToastKind { Info, Warning };
+void notify(std::string const& text, ToastKind kind = ToastKind::Info, float seconds = 5.f);
+/// Geode's NotificationIcon as a ToastKind (Warning / Error -> "!", everything else -> "i").
+ToastKind toastKindOf(geode::NotificationIcon icon);
+
+/// v0.9.0 (owner decision 2026-10-01): the top-right "!" notification (level, end screen or menu;
+/// independent of Show HUD): "Verify this run ...". A newer one replaces the one still on screen.
+/// Fades out after `seconds`.
 void verificationToast(std::string const& text, float seconds = 8.f);
 
 /// Level families (docs/LEVEL_FAMILY_DESIGN.md FA-D11): the server's "RELATED GAMEPLAY DETECTED"

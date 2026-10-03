@@ -15,6 +15,7 @@
 #include "Environment.hpp"
 #include "Settings.hpp"
 #include "Telemetry.hpp"
+#include "Hud.hpp"
 
 using namespace geode::prelude;
 
@@ -59,7 +60,7 @@ async::TaskHolder<Result<std::string>>& argonTask() {
 }
 
 void notify(std::string const& text, NotificationIcon icon, float seconds = NOTIFICATION_DEFAULT_TIME) {
-    Notification::create(text, icon, seconds)->show();
+    hud::notify(text, hud::toastKindOf(icon), seconds);   // v0.14.5: top right, like every GPRL notification
 }
 
 /// A level is running and not paused: never put a dialog in front of gameplay.

@@ -131,7 +131,7 @@ clip::UploadGate gate() {
 }
 
 void notify(std::string const& text, NotificationIcon icon = NotificationIcon::Info, float seconds = 3.5f) {
-    Notification::create(text, icon, seconds)->show();
+    hud::notify(text, hud::toastKindOf(icon), seconds);   // v0.14.5: top right, like every GPRL notification
 }
 
 void persist() {

@@ -7,6 +7,7 @@
 
 #include "../../core/clip_flow.hpp"
 #include "../Clipper.hpp"
+#include "../Hud.hpp"
 
 using namespace geode::prelude;
 
@@ -143,7 +144,7 @@ void ClipLinkPopup::onPaste(CCObject*) {
 void ClipLinkPopup::onSend(CCObject*) {
     std::string url = m_input->getString();
     if (youtubeVideoId(url).empty()) {
-        Notification::create("GPRL: that is not a link to a YouTube video (youtube.com/watch?v=... or youtu.be/...)", NotificationIcon::Warning, 5.f)->show();
+        hud::notify("GPRL: that is not a link to a YouTube video (youtube.com/watch?v=... or youtu.be/...)", hud::ToastKind::Warning, 5.f);
         return;
     }
     clipper::sendLink(m_clipId, url);

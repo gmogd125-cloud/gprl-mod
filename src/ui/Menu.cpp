@@ -17,6 +17,7 @@
 #include "../Tracker.hpp"
 #include "../clip/ClipLinkPopup.hpp"
 #include "Widgets.hpp"
+#include "../Hud.hpp"
 
 using namespace geode::prelude;
 
@@ -344,7 +345,7 @@ void GprlMenu::onWebsiteCode(CCObject*) {
 }
 
 void GprlMenu::onCopyCode(CCObject*) {
-    if (connect::copyWebsiteCode()) Notification::create("GPRL: code copied", NotificationIcon::Success)->show();
+    if (connect::copyWebsiteCode()) hud::notify("GPRL: code copied");
 }
 
 void GprlMenu::onHideCode(CCObject*) {
@@ -357,7 +358,7 @@ void GprlMenu::onVisitSite(CCObject*) { web::openLinkInBrowser(settings::get().s
 
 void GprlMenu::onFlush(CCObject*) {
     client::requestFlush();
-    Notification::create("GPRL: flushing pending events", NotificationIcon::Info)->show();
+    hud::notify("GPRL: flushing pending events");
 }
 
 void GprlMenu::onSettings(CCObject*) { geode::openSettingsPopup(Mod::get()); }

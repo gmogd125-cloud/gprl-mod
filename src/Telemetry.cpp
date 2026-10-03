@@ -22,6 +22,7 @@
 #include "Settings.hpp"
 #include "analyzer/Modes.hpp"
 #include "solver/GdOracle.hpp"
+#include "Hud.hpp"
 
 using namespace geode::prelude;
 
@@ -185,7 +186,7 @@ std::string levelRatingText(api::LevelRating const& r) {
 
 // ---- v0.12.2 Patreon: main-thread outcomes (queued by the worker) ----
 
-void patreonNotify(std::string const& text, NotificationIcon icon, float seconds = 5.f) { Notification::create(text, icon, seconds)->show(); }
+void patreonNotify(std::string const& text, NotificationIcon icon, float seconds = 5.f) { hud::notify(text, hud::toastKindOf(icon), seconds); }   // v0.14.5: top right
 
 /// Why a Connect Patreon / Sync Patreon request failed, in the player's words (the server's
 /// ApiErrorBody message is public-safe by contract and wins when there is one).

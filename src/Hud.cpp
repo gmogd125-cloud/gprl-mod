@@ -1,5 +1,7 @@
 #include "Hud.hpp"
 
+#include <Geode/ui/OverlayManager.hpp>
+
 #include <algorithm>
 #include <cmath>
 
@@ -602,43 +604,85 @@ void tick(float dt) {
     refresh();   // no-op without the line (show-hud off); the reset-generation check inside still runs
 }
 
-void verificationToast(std::string const& text, float seconds) {
+// ---- top-right notifications (v0.14.5, owner 2026-10-03: "make it so the notification pops up
+// like the video notification in the top right and instead of a ! make it a i ... any other
+// notifications will come through there") ----
+// One look for every GPRL notification: the dark panel of the verification notice, top right,
+// with a pulsing icon - a blue "i" for information, the red "!" for warnings and verification.
+// On Geode's overlay layer, so a notification survives a scene change (menu <-> level) like
+// Geode's own; several stack downward under the sigma/s panel instead of covering each other.
+
+namespace {
+
+constexpr int kToastTag = 0x6A7051;   // every GPRL top-right notification on the overlay
+constexpr float kToastGap = 4.f;
+
+/// The top edge for a new notification: under the sigma/s panel while a level shows it, then
+/// under every GPRL notification still on screen.
+float nextToastTop(CCNode* layer, float winH) {
+    float top = winH - 6.f - (s_topPanel && s_topPanel->getParent() ? s_topPanel->getContentSize().height + 8.f : 0.f);
+    if (auto* children = layer->getChildren()) {
+        for (auto* child : CCArrayExt<CCNode*>(children)) {
+            if (!child || child->getTag() != kToastTag) continue;
+            // anchored top-right: its position is its top edge
+            float bottom = child->getPositionY() - child->getContentSize().height;
+            top = std::min(top, bottom - kToastGap);
+        }
+    }
+    return top;
+}
+
+void showToast(std::string const& text, ToastKind kind, float seconds, char const* replaceId) {
     auto* director = CCDirector::sharedDirector();
-    auto* scene = director ? director->getRunningScene() : nullptr;
-    if (!scene) return;
+    auto* layer = OverlayManager::get();
+    if (!director || !layer) return;
     auto win = director->getWinSize();
-    // one at a time: a newer request replaces the one still on screen
-    if (auto* old = scene->getChildByID("verification-toast"_spr)) old->removeFromParent();
-    auto* bang = CCLabelBMFont::create("!", "bigFont.fnt");
-    bang->setColor({255, 70, 70});
-    bang->setScale(0.85f);
+    // a keyed notification (the verification notice) replaces its own older copy
+    if (replaceId) {
+        if (auto* old = layer->getChildByID(replaceId)) old->removeFromParent();
+    }
+    bool const warn = kind == ToastKind::Warning;
+    auto* icon = CCLabelBMFont::create(warn ? "!" : "i", "bigFont.fnt");
+    icon->setColor(warn ? ccColor3B{255, 70, 70} : ccColor3B{90, 170, 255});
+    icon->setScale(0.85f);
     auto* label = CCLabelBMFont::create(text.c_str(), "chatFont.fnt", 300.f, kCCTextAlignmentLeft);
     label->setScale(0.62f);
     label->setAnchorPoint({0.f, 0.5f});
-    float bangW = bang->getScaledContentSize().width;
-    float bangH = bang->getScaledContentSize().height;
+    float iconW = std::max(icon->getScaledContentSize().width, 10.f);
+    float iconH = icon->getScaledContentSize().height;
     float labelW = label->getScaledContentSize().width;
     float labelH = label->getScaledContentSize().height;
     float pad = 8.f;
-    float w = pad + bangW + pad + labelW + pad;
-    float h = std::max(bangH, labelH) + 2.f * pad;
+    float w = pad + iconW + pad + labelW + pad;
+    float h = std::max(iconH, labelH) + 2.f * pad;
     auto* panel = makePanel({24, 24, 30}, 230, w, h);
-    panel->setID("verification-toast"_spr);
+    if (replaceId) panel->setID(replaceId);
+    panel->setTag(kToastTag);
     panel->ignoreAnchorPointForPosition(false);
     panel->setAnchorPoint({1.f, 1.f});
-    // v0.12.0: under the top-right sigma panel while a level shows it
-    float topOffset = s_topPanel && s_topPanel->getParent() ? s_topPanel->getContentSize().height + 8.f : 0.f;
-    panel->setPosition({win.width - 6.f, win.height - 6.f - topOffset});
+    panel->setPosition({win.width - 6.f, nextToastTop(layer, win.height)});
     panel->setZOrder(100000);
     panel->setCascadeOpacityEnabled(true);
-    bang->setPosition({pad + bangW * 0.5f, h * 0.5f});
-    label->setPosition({pad + bangW + pad, h * 0.5f});
-    panel->addChild(bang);
+    icon->setPosition({pad + iconW * 0.5f, h * 0.5f});
+    label->setPosition({pad + iconW + pad, h * 0.5f});
+    panel->addChild(icon);
     panel->addChild(label);
-    bang->runAction(CCRepeatForever::create(CCSequence::create(CCScaleTo::create(0.4f, 1.0f), CCScaleTo::create(0.4f, 0.85f), nullptr)));
+    icon->runAction(CCRepeatForever::create(CCSequence::create(CCScaleTo::create(0.4f, 1.0f), CCScaleTo::create(0.4f, 0.85f), nullptr)));
     panel->runAction(CCSequence::create(CCDelayTime::create(std::max(1.f, seconds)), CCFadeOut::create(0.6f), CCRemoveSelf::create(), nullptr));
-    scene->addChild(panel);
-    log::info("GPRL: verification notice: {}", text);
+    layer->addChild(panel);
+    log::info("GPRL: notice ({}): {}", warn ? "!" : "i", text);
+}
+
+}  // namespace
+
+void notify(std::string const& text, ToastKind kind, float seconds) { showToast(text, kind, seconds, nullptr); }
+
+ToastKind toastKindOf(NotificationIcon icon) {
+    return icon == NotificationIcon::Warning || icon == NotificationIcon::Error ? ToastKind::Warning : ToastKind::Info;
+}
+
+void verificationToast(std::string const& text, float seconds) {
+    showToast(text, ToastKind::Warning, seconds, "verification-toast"_spr);
 }
 
 void familyNotice(std::vector<std::string> lines, float seconds) {

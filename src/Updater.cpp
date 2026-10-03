@@ -33,6 +33,7 @@
 #include "../core/json.hpp"
 #include "../core/updater.hpp"
 #include "Settings.hpp"
+#include "Hud.hpp"
 
 #ifdef GEODE_IS_WINDOWS
 #ifndef NOMINMAX
@@ -148,7 +149,7 @@ void showReadyPopup() {
 void showPendingNotification() {
     if (!s_notifyPending || !up::canNotifyNow(gameFocused(), playingUnpaused())) return;
     s_notifyPending = false;
-    Notification::create(fmt::format("GPRL {} downloaded - restart Geometry Dash to update", s_readyTag), NotificationIcon::Success, 4.f)->show();
+    gprl::hud::notify(fmt::format("GPRL {} downloaded - restart Geometry Dash to update", s_readyTag), gprl::hud::ToastKind::Info, 6.f);
 }
 
 /// A download or install that failed: the next check must fetch the full answer again (a 304
