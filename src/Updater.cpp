@@ -14,7 +14,8 @@
 //   3. download the asset, check size + SHA-256 + zip header, write it next to this package as
 //      "<package>.part" (Geode only loads *.geode), check its mod.json (id gmo12.gprl, the release's
 //      version), then rename it over this package - the same file Geode's own updater replaces
-//   4. "GPRL vX downloaded" notification (not over unpaused gameplay) and, on the main menu, a
+//   4. "GPRL vX downloaded" notification (v0.14.3: only while GD is the foreground window and not
+//      over unpaused gameplay; it waits otherwise) and, on the main menu (same rule), a
 //      Later / Restart popup (again on every main-menu visit). The running copy stays loaded
 //      until the game restarts.
 // Any failure only logs ("GPRL updater: ...") and leaves the installed copy alone.
@@ -32,6 +33,16 @@
 #include "../core/json.hpp"
 #include "../core/updater.hpp"
 #include "Settings.hpp"
+
+#ifdef GEODE_IS_WINDOWS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <Windows.h>   // gameFocused (v0.14.3)
+#endif
 
 using namespace geode::prelude;
 
@@ -58,6 +69,7 @@ std::string s_etag;                 // ETag of the last 200 answer: later checks
 bool s_tickerStarted = false;
 bool s_loggedSettingOff = false;
 bool s_loggedUpToDate = false;
+bool s_notifyPending = false;     // v0.14.3: the "downloaded" notification waits for focus
 
 /// Never destroyed, like Connect.cpp's Argon holder: no static destructor may touch the async
 /// runtime after it shut down at game exit.
@@ -90,6 +102,20 @@ bool onMainMenu() {
     return scene && scene->getChildByType<MenuLayer>(0);
 }
 
+/// v0.14.3 (owner: "make sure the player is tabbed into gd when you show the notification"):
+/// Geometry Dash is the foreground window - the window in front belongs to this process.
+bool gameFocused() {
+#ifdef GEODE_IS_WINDOWS
+    HWND fg = GetForegroundWindow();
+    if (!fg) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    return pid == GetCurrentProcessId();
+#else
+    return true;
+#endif
+}
+
 web::WebRequest request(char const* accept, int timeoutSeconds) {
     web::WebRequest req;
     req.userAgent(gprl::settings::clientBuild());
@@ -107,7 +133,7 @@ void finish(std::string const& line, up::CheckOutcome outcome, bool quiet = fals
 }
 
 void showReadyPopup() {
-    if (s_state != State::Ready || s_popupShown || !onMainMenu()) return;
+    if (s_state != State::Ready || s_popupShown || !up::canAskNow(gameFocused(), playingUnpaused(), onMainMenu())) return;
     s_popupShown = true;
     createQuickPopup("GPRL update",
                      fmt::format("GPRL <cg>{}</c> is downloaded.\nRestart Geometry Dash to start using it.\n<cy>(You are on {} until then.)</c>", s_readyTag,
@@ -115,6 +141,14 @@ void showReadyPopup() {
                      "Later", "Restart", [](FLAlertLayer*, bool restart) {
                          if (restart) geode::utils::game::restart(true);
                      });
+}
+
+/// The "downloaded" notification, once: only while GD is the foreground window and no level runs
+/// unpaused (v0.14.3); otherwise the ticker retries every few seconds.
+void showPendingNotification() {
+    if (!s_notifyPending || !up::canNotifyNow(gameFocused(), playingUnpaused())) return;
+    s_notifyPending = false;
+    Notification::create(fmt::format("GPRL {} downloaded - restart Geometry Dash to update", s_readyTag), NotificationIcon::Success, 4.f)->show();
 }
 
 /// A download or install that failed: the next check must fetch the full answer again (a 304
@@ -165,7 +199,8 @@ void install(up::Release const& rel, web::WebResponse const& res) {
     s_state = State::Ready;   // no further checks this session: the update waits for the restart
     s_readyTag = rel.tag;
     log::info("GPRL updater: {} installed to {} ({} bytes, sha256 {}) - active after a restart", rel.tag, utils::string::pathToString(target), data.size(), rel.sha256Hex);
-    if (!playingUnpaused()) Notification::create(fmt::format("GPRL {} downloaded - restart Geometry Dash to update", rel.tag), NotificationIcon::Success, 4.f)->show();
+    s_notifyPending = true;   // shown by showPendingNotification once the player is in the game
+    showPendingNotification();
     showReadyPopup();
 }
 
@@ -218,6 +253,11 @@ void check() {
 /// due and nothing runs in front of unpaused gameplay (core/updater shouldCheckNow).
 void tick() {
     if (s_state == State::Off) return;
+    if (s_state == State::Ready) {
+        showPendingNotification();
+        showReadyPopup();
+        return;
+    }
     if (!Mod::get()->getSettingValue<bool>("auto-update")) {
         if (!s_loggedSettingOff) log::info("GPRL updater: off (setting Auto-update)");
         s_loggedSettingOff = true;

@@ -84,4 +84,14 @@ bool shouldCheckNow(int64_t nowMs, int64_t nextCheckAt, bool idle, bool playingU
 /// GitHub's answer to a release check, as the schedule sees it (HTTP status code).
 CheckOutcome outcomeOfStatus(int httpStatus);
 
+// ---- v0.14.3 when the player is told (owner 2026-10-03: "make sure the player is tabbed into gd
+// when you show the notification") ----
+/// The "downloaded" notification shows only while Geometry Dash is the foreground window and no
+/// level runs unpaused; otherwise it waits (the updater's ticker retries every few seconds).
+inline bool canNotifyNow(bool gameFocused, bool playingUnpaused) { return gameFocused && !playingUnpaused; }
+/// The Later / Restart popup: the same, and only on the main menu.
+inline bool canAskNow(bool gameFocused, bool playingUnpaused, bool onMainMenu) {
+    return canNotifyNow(gameFocused, playingUnpaused) && onMainMenu;
+}
+
 }  // namespace gprl::updater

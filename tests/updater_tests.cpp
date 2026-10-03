@@ -186,6 +186,18 @@ void testSchedule() {
     CHECK(checks == 60);
 }
 
+void testFocus() {
+    SECTION("v0.14.3: the update is announced only while GD is the foreground window");
+    CHECK(canNotifyNow(true, false));
+    CHECK(!canNotifyNow(false, false));   // tabbed out: wait
+    CHECK(!canNotifyNow(true, true));     // a level running unpaused: wait
+    CHECK(!canNotifyNow(false, true));
+    CHECK(canAskNow(true, false, true));
+    CHECK(!canAskNow(false, false, true)); // tabbed out on the main menu: the popup waits
+    CHECK(!canAskNow(true, false, false)); // not on the main menu
+    CHECK(!canAskNow(true, true, true));
+}
+
 }  // namespace
 
 int live(char const* jsonPath, char const* assetPath, char const* installed) {
@@ -219,5 +231,6 @@ int main(int argc, char** argv) {
     testRelease();
     testVerify();
     testSchedule();
+    testFocus();
     return gprl::test::finish("updater_tests");
 }
