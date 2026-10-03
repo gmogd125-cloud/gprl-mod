@@ -143,4 +143,19 @@ bool verifyAsset(std::string_view bytes, Release const& release, std::string& wh
     return true;
 }
 
+int64_t nextCheckAtMs(int64_t lastCheckMs, CheckOutcome outcome) {
+    return lastCheckMs + (outcome == CheckOutcome::RateLimited ? kRateLimitBackoffMs : kCheckIntervalMs);
+}
+
+bool shouldCheckNow(int64_t nowMs, int64_t nextCheckAt, bool idle, bool playingUnpaused) {
+    return idle && !playingUnpaused && nowMs >= nextCheckAt;
+}
+
+CheckOutcome outcomeOfStatus(int httpStatus) {
+    if (httpStatus == 304) return CheckOutcome::NotModified;
+    if (httpStatus == 403 || httpStatus == 429) return CheckOutcome::RateLimited;
+    if (httpStatus >= 200 && httpStatus < 300) return CheckOutcome::UpToDate;
+    return CheckOutcome::Failed;
+}
+
 }  // namespace gprl::updater

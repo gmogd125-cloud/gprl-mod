@@ -4,7 +4,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64")
 set(CMAKE_OSX_DEPLOYMENT_TARGET 10.15)
 
-project(GPRL VERSION 0.14.1)
+project(GPRL VERSION 0.14.2)
 
 # core/ is pure C++20 (no Geode or cocos includes) and is compiled a second time by
 # tests/run_tests.ps1 with cl.exe on the host. Keep it that way.

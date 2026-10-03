@@ -57,4 +57,31 @@ bool parseLatestRelease(json::Value const& body, Release& out, std::string& why)
 /// .geode is a zip). false with `why` otherwise.
 bool verifyAsset(std::string_view bytes, Release const& release, std::string& why);
 
+// ---- v0.14.2 check schedule (owner 2026-10-03: "make it check every minute") ----
+// The first check runs on the first main menu; afterwards one check a minute for the whole
+// session, so a release published while the game is open is downloaded within about a minute.
+// GitHub allows 60 unauthenticated API requests per hour per IP, but a CONDITIONAL request
+// (If-None-Match with the last ETag) answered 304 Not Modified does not count against it, so the
+// steady state costs nothing. Never while a level runs unpaused (no request, no download, no file
+// write in front of gameplay); a rate-limit answer backs off 15 minutes.
+inline constexpr int64_t kCheckIntervalMs = 60'000;
+inline constexpr int64_t kRateLimitBackoffMs = 15 * 60'000;
+
+enum class CheckOutcome {
+    UpToDate,      // 200: the latest release is not newer
+    NotModified,   // 304: nothing changed since the last ETag
+    Failed,        // network error, unreadable answer, a download or install that failed
+    RateLimited,   // 403 / 429 from GitHub
+};
+
+/// When the next check may run after one that ended at `lastCheckMs` with `outcome`.
+int64_t nextCheckAtMs(int64_t lastCheckMs, CheckOutcome outcome);
+
+/// Whether a check starts now: the updater is idle (not checking, downloading, or holding a
+/// downloaded update), the check is due, and no level is running unpaused.
+bool shouldCheckNow(int64_t nowMs, int64_t nextCheckAt, bool idle, bool playingUnpaused);
+
+/// GitHub's answer to a release check, as the schedule sees it (HTTP status code).
+CheckOutcome outcomeOfStatus(int httpStatus);
+
 }  // namespace gprl::updater

@@ -150,6 +150,42 @@ void testVerify() {
     CHECK(why.find("zip") != std::string::npos);
 }
 
+void testSchedule() {
+    SECTION("v0.14.2: one check a minute, never in front of unpaused gameplay, 15 min after a rate limit");
+    CHECK(kCheckIntervalMs == 60'000);
+    CHECK(nextCheckAtMs(1'000, CheckOutcome::UpToDate) == 61'000);
+    CHECK(nextCheckAtMs(1'000, CheckOutcome::NotModified) == 61'000);
+    CHECK(nextCheckAtMs(1'000, CheckOutcome::Failed) == 61'000);
+    CHECK(nextCheckAtMs(1'000, CheckOutcome::RateLimited) == 1'000 + 15 * 60'000);
+    // due, idle, menus: check
+    CHECK(shouldCheckNow(61'000, 61'000, true, false));
+    CHECK(shouldCheckNow(90'000, 61'000, true, false));
+    // not due yet
+    CHECK(!shouldCheckNow(60'999, 61'000, true, false));
+    // a level running unpaused: wait (the check runs once the player pauses or leaves)
+    CHECK(!shouldCheckNow(90'000, 61'000, true, true));
+    // checking / downloading / an update waiting for the restart: no new check
+    CHECK(!shouldCheckNow(90'000, 61'000, false, false));
+    // GitHub answers
+    CHECK(outcomeOfStatus(200) == CheckOutcome::UpToDate);
+    CHECK(outcomeOfStatus(304) == CheckOutcome::NotModified);
+    CHECK(outcomeOfStatus(403) == CheckOutcome::RateLimited);
+    CHECK(outcomeOfStatus(429) == CheckOutcome::RateLimited);
+    CHECK(outcomeOfStatus(404) == CheckOutcome::Failed);
+    CHECK(outcomeOfStatus(500) == CheckOutcome::Failed);
+    CHECK(outcomeOfStatus(0) == CheckOutcome::Failed);   // no connection
+    // an hour of checks: 60 requests, all but the first answered 304 in the steady state
+    int64_t now = 0, next = 0;
+    int checks = 0;
+    for (int s = 0; s < 3600; ++s, now += 1'000) {
+        if (shouldCheckNow(now, next, true, false)) {
+            ++checks;
+            next = nextCheckAtMs(now, checks == 1 ? CheckOutcome::UpToDate : CheckOutcome::NotModified);
+        }
+    }
+    CHECK(checks == 60);
+}
+
 }  // namespace
 
 int live(char const* jsonPath, char const* assetPath, char const* installed) {
@@ -182,5 +218,6 @@ int main(int argc, char** argv) {
     testVersions();
     testRelease();
     testVerify();
+    testSchedule();
     return gprl::test::finish("updater_tests");
 }
