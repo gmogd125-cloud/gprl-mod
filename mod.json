@@ -1,0 +1,308 @@
+{
+	"geode": "5.6.1",
+	"gd": {
+		"win": "2.2081"
+	},
+	"id": "gmo12.gprl",
+	"name": "GPRL",
+	"version": "v0.14.0",
+	"developer": "Gmo12",
+	"description": "Geometry Precision Ranking List client: connect with your Geometry Dash account (no website account needed), then it records inputs, deaths, progress and player state as reproducible telemetry, shows your calibration progress, and sends evidence to the GPRL server (or keeps it on disk in local-only mode). Optional clipping keeps a video of exceptional runs for you to save or send (never uploaded on its own). The server computes every rating; this mod never does. Created by gmo.",
+	"tags": [
+		"gameplay",
+		"utility",
+		"online"
+	],
+	"resources": {
+		"sprites": [
+			"resources/ranks/*.png"
+		]
+	},
+	"dependencies": {
+		"syzzi.click_between_frames": {
+			"version": ">=v1.5.0",
+			"required": false
+		},
+		"eclipse.eclipse-menu": {
+			"version": ">=v1.9.0",
+			"required": false
+		}
+	},
+	"settings": {
+		"enabled": {
+			"type": "bool",
+			"name": "Enabled",
+			"description": "Record gameplay telemetry while playing levels. Off records nothing.",
+			"default": true
+		},
+		"auto-update": {
+			"type": "bool",
+			"name": "Auto-update",
+			"description": "When the main menu opens, GPRL checks github.com/gmogd125-cloud/gprl-mod for a newer version, downloads it and asks you to restart Geometry Dash (you can pick Later). The download is checked against GitHub's SHA-256 before it replaces this copy. Only release copies update themselves.",
+			"default": true
+		},
+		"network-title": {
+			"type": "title",
+			"name": "Server"
+		},
+		"api-base-url": {
+			"type": "string",
+			"name": "API base URL",
+			"description": "The GPRL server. Leave it as https://gprl-api.gprl.workers.dev unless you run your own (\"https://\" is added if missing; a trailing /v1 or /api is ignored). Empty or the old example address means the GPRL server. An invalid URL makes the mod behave as if local-only mode were on, and the popup says so. Connect with the button in the pause-menu GPRL popup.",
+			"default": "https://gprl-api.gprl.workers.dev"
+		},
+		"site-url": {
+			"type": "string",
+			"name": "Website",
+			"description": "The GPRL website. \"Open my profile\" (pause-menu GPRL popup) only ever opens a link on this site; anything else the server sends is refused. Leave it as https://gprl.pages.dev unless you run your own site. Empty or invalid means https://gprl.pages.dev.",
+			"default": "https://gprl.pages.dev"
+		},
+		"local-only": {
+			"type": "bool",
+			"name": "Local-only mode",
+			"description": "Never talk to the server. Telemetry batches are written to this mod's save folder as JSONL files (bounded, rotating) so you can inspect them. Nothing ever counts for a rating in this mode.",
+			"default": false
+		},
+		"live-recalc": {
+			"type": "bool",
+			"name": "Live updates",
+			"description": "The server recalculates your rating every 45 s while you play a counting level so the HUD, the menu and the website follow the game. Off: they update when you leave the level.",
+			"default": true
+		},
+		"display-title": {
+			"type": "title",
+			"name": "Display"
+		},
+		"show-hud": {
+			"type": "bool",
+			"name": "Show HUD",
+			"description": "Small bottom-left line (the timing window history on the right is its own setting below): jumps and attempts this level, and your sigma/s: LOCKED with the calibration percent (plus your private estimate once your calibration passes 50%, hidden while the clip buffer records so evidence clips never carry it), the figure with its confidence once the server shows it, and your rank once awarded. Updates twice a second.",
+			"default": true
+		},
+		"debug-log": {
+			"type": "bool",
+			"name": "Debug log",
+			"description": "Write every event, batch and network step to the Geode log (also turns the solver log to verbose).",
+			"default": false
+		},
+		"analysis-title": {
+			"type": "title",
+			"name": "Level analysis (background simulator)"
+		},
+		"analysis-mode": {
+			"type": "string",
+			"name": "Analysis mode",
+			"description": "Whether the background level simulator runs. passive: no simulator, and so no level identity and no related-level notice either (both come from the same read-only copy of the level). offline or full (the same thing): GPRL copies the level's objects once (reading only) and simulates the level on a background thread to measure its timing windows and difficulty; it never touches the running game. Your OWN timing windows (what your sigma/s and the level ratings need) are ALWAYS measured, whatever this says; only Record-Safe Mode stops that, for list submissions.",
+			"default": "full",
+			"one-of": ["passive", "offline", "full"]
+		},
+		"record-safe": {
+			"type": "bool",
+			"name": "Record-Safe Mode",
+			"description": "Record-Safe Mode for list submissions: no hidden clones in the live physics loop, no bot or replay automation, no noclip use; the offline simulation only runs while no attempt is active. Telemetry stays passive. GPRL is designed to avoid affecting gameplay; it is not approved by AREDL, Pointercrate or any other list unless that list says so.",
+			"default": false
+		},
+		"analysis-cpu": {
+			"type": "string",
+			"name": "Analysis CPU use",
+			"description": "How much processor time the background simulator may take. low (default): below-normal thread priority, short bursts with rests, at most 0.5 ms per frame for reading the level while you play. normal: below-normal priority, longer bursts, 1 ms per frame. fast (GPRL Plus) and fastest (GPRL Pro): even longer bursts on the background thread only (the game thread still gives 1 ms per frame); without that plan they run as normal and the Session tab says why. Outside an attempt (the death pause) reading the level takes at most a quarter of a frame (8 ms only once, while the level loads). Every speed pauses whenever the game cannot hold its frame rate, and in Record-Safe Mode during attempts. The speed never changes your timing windows, sigma/s or what is sent.",
+			"default": "low",
+			"one-of": ["low", "normal", "fast", "fastest"]
+		},
+		"analysis-cache": {
+			"type": "bool",
+			"name": "Use cached analyses",
+			"description": "Before simulating, ask the GPRL server for a finished analysis of this exact gameplay version (decoration edits keep it) and use it instead. Finished analyses are also kept on this computer, so a level you visit again is not simulated again.",
+			"default": true
+		},
+		"analysis-upload": {
+			"type": "bool",
+			"name": "Send finished analyses",
+			"description": "Send a finished level analysis to the GPRL server so nobody has to simulate the same level version again. It describes the LEVEL only and never counts for your rating. Needs a connected account.",
+			"default": true
+		},
+		"analysis-debug": {
+			"type": "bool",
+			"name": "Analysis log",
+			"description": "Write the analyzer's steps to the Geode log: extraction slices and their cost, worker phases, cache answers and uploads.",
+			"default": false
+		},
+		"family-notice": {
+			"type": "bool",
+			"name": "Related-level notice",
+			"description": "When you enter a level whose gameplay the GPRL server already knows under another name, copy, StartPos version or re-decoration, a small top-left panel says so for 6 seconds (family name, gameplay and presentation match, whether your earlier practice on it is linked). The level identity itself (section fingerprints, never your inputs) is sent with 'Send finished analyses' while connected. Off: nothing is shown; the Session tab still lists the family.",
+			"default": true
+		},
+		"solver-title": {
+			"type": "title",
+			"name": "Timing windows (solver)"
+		},
+		"show-last-window": {
+			"type": "bool",
+			"name": "Show timing window history",
+			"description": "Middle-right list of your last 8 presses and releases, newest at the top: \"PRESS 4.17 ms [-2.08 +2.08]\" = the local window in milliseconds and how early / late the input could have been (green measured, red miss, grey dropped with the reason; older lines fade). Once the input's final result arrives the line adds \"local 4.00 f / seq 10.75 f ok\": the local (fixed-sequence) window, the sequence-adjusted window and the result's status. During bot playback the lines say \"bot\": those windows only describe the level. A quick way to see the solver working.",
+			"default": true
+		},
+		"solver-subtick": {
+			"type": "string",
+			"name": "Sub-tick refinement",
+			"description": "With Click Between Frames active, refine each window below one 240 TPS tick: 1/8 tick = 0.52 ms (one extra pass), 1/64 tick = 0.065 ms (two passes). Without CBF windows are measured in whole ticks whatever this says.",
+			"default": "1/8 tick",
+			"one-of": ["off", "1/8 tick", "1/64 tick"]
+		},
+		"solver-debug": {
+			"type": "string",
+			"name": "Solver log",
+			"description": "How much the solver writes to the Geode log: off = ready / gate / 5 s summaries only, windows = one line per measured input, verbose = every pass, spawn and control comparison (Debug log above forces verbose).",
+			"default": "windows",
+			"one-of": ["off", "windows", "verbose"]
+		},
+		"max-shift-ticks": {
+			"type": "int",
+			"name": "Max shift (ticks)",
+			"description": "How far an input is moved earlier / later at most, in 240 TPS ticks. Windows wider than this are reported as open on that side.",
+			"default": 10,
+			"min": 1,
+			"max": 10
+		},
+		"horizon-seconds": {
+			"type": "float",
+			"name": "Look-ahead (seconds) - only with the settled look-ahead OFF",
+			"description": "How long a shifted copy must survive (or re-join the real run) after the input to count as passing when the settled look-ahead below is off.",
+			"default": 0.5,
+			"min": 0.25,
+			"max": 2.0
+		},
+		"settle-lookahead": {
+			"type": "bool",
+			"name": "Settled look-ahead (accurate)",
+			"description": "ON by default. A shifted copy only counts as passing once it is SETTLED: back on the ground (cube, ball, robot, spider) for 0.1 s after the input - through every orb, portal and hazard that follows, with your later clicks replayed as you made them - or, in ship / ufo / wave / swing, alive 2 s after it. A copy still in the air at the end of the look-ahead is reported 'not tested', never as a pass. Results take longer (up to the look-ahead below) but are what you actually survived.",
+			"default": true
+		},
+		"settle-max-seconds": {
+			"type": "float",
+			"name": "Settled look-ahead: longest wait (seconds)",
+			"description": "How long a copy may keep going before it is given up as 'unsettled'. Longer = more copies alive at once; 8 s covers any orb-portal-ground sequence.",
+			"default": 8.0,
+			"min": 1.0,
+			"max": 10.0
+		},
+		"settle-ground-ticks": {
+			"type": "int",
+			"name": "Settled look-ahead: ground ticks",
+			"description": "Consecutive 240 TPS ticks on the ground (not dashing, not on an orb) after the input that make a copy settled. 24 = 0.1 s.",
+			"default": 24,
+			"min": 6,
+			"max": 240
+		},
+		"measure-sequence-adjusted": {
+			"type": "bool",
+			"name": "Sequence-adjusted windows",
+			"description": "With spare solver time only: for inputs whose window is limited by something that happens AFTER later inputs (wave zigzags, ship corrections), also measure how far the input can move when the next inputs of the same sequence move with it (the next one, or the next 2 or 3). A press's window then lets its release follow (the hold is kept); a release's window keeps the press and becomes the hold-duration window. Inputs it cannot decide are marked 'sequence dependent' instead of getting a guessed number. Describes the level; replays from the last few seconds, never slows your game down.",
+			"default": true
+		},
+		"measure-joint-share": {
+			"type": "bool",
+			"name": "Joint-share measurements (old)",
+			"description": "The v0.6.1 joint windows of two or three neighbouring inputs (how much of the box of single-input windows works together). Superseded by the sequence-adjusted windows; runs only while no sequence-adjusted measurement waits. Off by default.",
+			"default": false
+		},
+		"solver-trace-max-ticks": {
+			"type": "int",
+			"name": "Debug: trace windows up to (ticks)",
+			"description": "Debug view of a timing: for every window at most this many 240 TPS ticks wide (at most 8 per attempt) the Geode log gets 'GPRL trace:' lines with the real run, the earliest / latest valid and the first invalid trajectory on each side, the killer object and the hitbox, so a claimed '4-frame timing' can be checked from the log alone. 0 = off. Costs a little memory per traced input, nothing else.",
+			"default": 0,
+			"min": 0,
+			"max": 40
+		},
+		"solver-trace-overlay": {
+			"type": "bool",
+			"name": "Debug: draw the last traced timing",
+			"description": "Needs 'trace windows up to' above 0. Draws the last traced input in the level: the real run (white), the earliest and latest valid trajectories (green), the first invalid ones on each side (red, with the hitbox where they died and the object that killed them in orange; the sequence-adjusted ones cyan / magenta), plus a small panel with the input's time, type, gamemode, speed, gravity, local and sequence-adjusted windows, hold range and why the invalid shifts failed. Drawing only: it never touches the physics. Also shown in the Session tab.",
+			"default": false
+		},
+		"isolation-check": {
+			"type": "string",
+			"name": "Isolation check",
+			"description": "The analyzer proves it never changes the live game: it compares a snapshot of both players, the camera, the layer and the nearby orbs / pads / portals before and after everything it does. 'every block' (default) checks once per physics step and costs nothing noticeable; 'every clone step' checks around every single clone step, costs more and names the exact clone when a difference is found (Debug log forces it). A difference is logged as LIVE_STATE_MUTATION_DETECTED, the affected measurements are dropped and the analyzer stops until the restart. Never off.",
+			"default": "every block",
+			"one-of": ["every block", "every clone step"]
+		},
+		"solver-dual": {
+			"type": "string",
+			"name": "Dual sections",
+			"description": "What the analyzer does while the level is in dual mode. 'shadow only' (default): a hidden pair of clones (player 1 + player 2) follows the real pair step by step to prove the two-player model; nothing is measured in dual sections yet, no timing windows come out of them. 'off': no clone runs at all while dual. Either way the real players are never touched.",
+			"default": "shadow only",
+			"one-of": ["off", "shadow only"]
+		},
+		"clipping-title": {
+			"type": "title",
+			"name": "Clipping (evidence of exceptional runs)"
+		},
+		"clipping": {
+			"type": "bool",
+			"name": "Clipping",
+			"description": "ON by default since v0.9.0. On: while a level is open, the game picture and the game's own sound are recorded into a rolling buffer on disk (needs ffmpeg.exe). When the GPRL server judges a run too good for your attempts on the level, a '!' notification appears top right and the clip of that run (game, microphone and desktop sound as separate tracks) is SENT to the GPRL moderators for verification. Every other kept clip still asks: Save to computer / Send / Save + send / Do nothing. Cost: one hardware (or libx264) 720p 60 fps encode while you play, and about 36 MB of disk per minute kept.",
+			"default": true
+		},
+		"clip-buffer-seconds": {
+			"type": "int",
+			"name": "Buffer length (seconds)",
+			"description": "How many seconds of footage are always kept. The attempt you are playing is kept whole on top of that (up to 10 minutes), so a run longer than the buffer is still complete.",
+			"default": 120,
+			"min": 10,
+			"max": 600,
+			"control": { "slider": true, "slider-step": 10, "arrows": true, "arrow-step": 10 }
+		},
+		"clip-quality": {
+			"type": "string",
+			"name": "Clip quality",
+			"description": "Height of the recorded picture at 60 fps (never upscaled): 480p = 2.5 Mbit/s (about 18 MB per minute), 720p = 5 Mbit/s (about 36 MB per minute), 1080p = 9 Mbit/s (about 64 MB per minute). Clips over the server's upload limit can be saved but not sent.",
+			"default": "720p",
+			"one-of": ["480p", "720p", "1080p"]
+		},
+		"clip-disk-cap-mb": {
+			"type": "int",
+			"name": "Buffer disk cap (MB)",
+			"description": "The rolling buffer never uses more disk than this; when it is reached the oldest footage goes first. Recording also stops while the drive is almost full.",
+			"default": 1024,
+			"min": 128,
+			"max": 8192,
+			"control": { "slider": true, "slider-step": 128, "arrows": true, "arrow-step": 128 }
+		},
+		"clip-game-audio": {
+			"type": "bool",
+			"name": "Record game sound",
+			"description": "The game's own sound (music and effects) goes into the clip. Other apps like Discord are never recorded.",
+			"default": true
+		},
+		"clip-mic": {
+			"type": "bool",
+			"name": "Record my microphone (separate track)",
+			"description": "ON by default since v0.9.0 (a run that needs verification is sent with your microphone). While Clipping records, your default Windows recording device is recorded too and added to a clip as its own sound track (click sounds help reviewers; the website mutes each track separately). It stays in memory until a clip is made and only leaves with a clip that is sent.",
+			"default": true
+		},
+		"clip-desktop-audio": {
+			"type": "bool",
+			"name": "Record desktop sound (separate track)",
+			"description": "ON by default. While Clipping records, everything your default output device plays (Discord, music, the game) is recorded through Windows loopback and added to a clip as its own third sound track, which the website can mute on its own. It stays in memory until a clip is made and only leaves with a clip that is sent.",
+			"default": true
+		},
+		"clip-folder": {
+			"type": "folder",
+			"name": "Clip folder",
+			"description": "Where the rolling buffer (gprl-clip-buffer) and your clips (gprl-clips) live. Pick a drive with free space. Empty = this mod's save folder.",
+			"default": ""
+		},
+		"ffmpeg-path": {
+			"type": "file",
+			"name": "ffmpeg.exe",
+			"description": "Clipping uses ffmpeg to encode. Empty = ffmpeg.exe in this mod's save folder, then the In-Game Clipper's ffmpeg when that mod is installed, then anywhere on PATH.",
+			"default": "",
+			"control": {
+				"dialog": "open",
+				"filters": [ { "files": [ "*.exe" ], "description": "ffmpeg.exe" } ]
+			}
+		}
+	}
+}

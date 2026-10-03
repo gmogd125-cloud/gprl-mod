@@ -1,0 +1,486 @@
+{
+  "$comment": "DEV FIXTURE (hand-written, geode v0.12.2): GET /v1/me/entitlements bodies (V1EntitlementsResponse = shared/src/entitlements/plans.ts entitlementFor(...) + generatedAt) and what core/entitlements.cpp parse() must make of them. Read by geode/tests/entitlements_tests.cpp. The plan-shaped bodies are exactly what entitlementFor returns; the last cases are hostile / broken bodies.",
+  "cases": [
+    {
+      "name": "free (FREE_ENTITLEMENT)",
+      "body": {
+        "plan": "free",
+        "planLabel": "Free",
+        "status": "none",
+        "trial": false,
+        "processingPriority": 0,
+        "priorityEvidence": false,
+        "advancedAnalytics": false,
+        "experimentalAccess": false,
+        "supporterBadge": false,
+        "historyDays": 90,
+        "features": {
+          "plan": "free",
+          "processingPriority": 0,
+          "supporterBadge": false,
+          "customization": false,
+          "historyDays": 90,
+          "analytics": "none",
+          "improvedRecommendations": false,
+          "comparisonTools": false,
+          "backgroundAnalysis": "normal",
+          "priorityEvidence": false,
+          "experimentalAccess": false
+        },
+        "entitledUntil": null,
+        "patreon": { "connected": false, "lastSyncAt": null },
+        "generatedAt": "2026-10-02T12:00:00.000Z"
+      },
+      "expect": {
+        "valid": true,
+        "plan": "free",
+        "status": "none",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "normal",
+        "historyDays": 90,
+        "patreonConnected": false,
+        "planLine": "Plan: Free"
+      }
+    },
+    {
+      "name": "supporter, active",
+      "body": {
+        "plan": "supporter",
+        "planLabel": "GPRL Supporter",
+        "status": "active",
+        "trial": false,
+        "processingPriority": 1,
+        "priorityEvidence": false,
+        "advancedAnalytics": false,
+        "experimentalAccess": false,
+        "supporterBadge": true,
+        "historyDays": 365,
+        "features": {
+          "plan": "supporter",
+          "processingPriority": 1,
+          "supporterBadge": true,
+          "customization": true,
+          "historyDays": 365,
+          "analytics": "none",
+          "improvedRecommendations": false,
+          "comparisonTools": false,
+          "backgroundAnalysis": "normal",
+          "priorityEvidence": false,
+          "experimentalAccess": false
+        },
+        "entitledUntil": "2026-11-01T00:00:00.000Z",
+        "patreon": { "connected": true, "lastSyncAt": "2026-10-02T11:58:00.000Z" },
+        "generatedAt": "2026-10-02T12:00:00.000Z"
+      },
+      "expect": {
+        "valid": true,
+        "plan": "supporter",
+        "status": "active",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "normal",
+        "historyDays": 365,
+        "patreonConnected": true,
+        "planLine": "Plan: GPRL Supporter (Patreon)"
+      }
+    },
+    {
+      "name": "plus, active",
+      "body": {
+        "plan": "plus",
+        "planLabel": "GPRL Plus",
+        "status": "active",
+        "trial": false,
+        "processingPriority": 2,
+        "priorityEvidence": false,
+        "advancedAnalytics": true,
+        "experimentalAccess": false,
+        "supporterBadge": true,
+        "historyDays": 730,
+        "features": {
+          "plan": "plus",
+          "processingPriority": 2,
+          "supporterBadge": true,
+          "customization": true,
+          "historyDays": 730,
+          "analytics": "extended",
+          "improvedRecommendations": true,
+          "comparisonTools": true,
+          "backgroundAnalysis": "faster",
+          "priorityEvidence": false,
+          "experimentalAccess": false
+        },
+        "entitledUntil": "2026-11-01T00:00:00.000Z",
+        "patreon": { "connected": true, "lastSyncAt": "2026-10-02T11:00:00.000Z" },
+        "generatedAt": "2026-10-02T12:00:00.000Z"
+      },
+      "expect": {
+        "valid": true,
+        "plan": "plus",
+        "status": "active",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "faster",
+        "historyDays": 730,
+        "patreonConnected": true,
+        "planLine": "Plan: GPRL Plus (Patreon)"
+      }
+    },
+    {
+      "name": "pro, active",
+      "body": {
+        "plan": "pro",
+        "planLabel": "GPRL Pro",
+        "status": "active",
+        "trial": false,
+        "processingPriority": 3,
+        "priorityEvidence": true,
+        "advancedAnalytics": true,
+        "experimentalAccess": true,
+        "supporterBadge": true,
+        "historyDays": null,
+        "features": {
+          "plan": "pro",
+          "processingPriority": 3,
+          "supporterBadge": true,
+          "customization": true,
+          "historyDays": null,
+          "analytics": "full",
+          "improvedRecommendations": true,
+          "comparisonTools": true,
+          "backgroundAnalysis": "fastest",
+          "priorityEvidence": true,
+          "experimentalAccess": true
+        },
+        "entitledUntil": "2026-11-01T00:00:00.000Z",
+        "patreon": { "connected": true, "lastSyncAt": "2026-10-02T11:57:30.000Z" },
+        "generatedAt": "2026-10-02T12:00:00.000Z"
+      },
+      "expect": {
+        "valid": true,
+        "plan": "pro",
+        "status": "active",
+        "trial": false,
+        "priorityEvidence": true,
+        "backgroundAnalysis": "fastest",
+        "historyDays": null,
+        "patreonConnected": true,
+        "planLine": "Plan: GPRL Pro (Patreon)"
+      }
+    },
+    {
+      "name": "pro, Patreon free trial (no Priority Evidence)",
+      "body": {
+        "plan": "pro",
+        "planLabel": "GPRL Pro",
+        "status": "trial",
+        "trial": true,
+        "processingPriority": 3,
+        "priorityEvidence": false,
+        "advancedAnalytics": true,
+        "experimentalAccess": true,
+        "supporterBadge": true,
+        "historyDays": null,
+        "features": {
+          "plan": "pro",
+          "processingPriority": 3,
+          "supporterBadge": true,
+          "customization": true,
+          "historyDays": null,
+          "analytics": "full",
+          "improvedRecommendations": true,
+          "comparisonTools": true,
+          "backgroundAnalysis": "fastest",
+          "priorityEvidence": false,
+          "experimentalAccess": true
+        },
+        "entitledUntil": "2026-10-09T12:00:00.000Z",
+        "patreon": { "connected": true, "lastSyncAt": "2026-10-02T11:50:00.000Z" },
+        "generatedAt": "2026-10-02T12:00:00.000Z"
+      },
+      "expect": {
+        "valid": true,
+        "plan": "pro",
+        "status": "trial",
+        "trial": true,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "fastest",
+        "historyDays": null,
+        "patreonConnected": true,
+        "planLine": "Plan: GPRL Pro (Patreon) - trial"
+      }
+    },
+    {
+      "name": "trial body that still claims Priority Evidence (clamped off)",
+      "body": {
+        "plan": "pro",
+        "status": "trial",
+        "trial": true,
+        "priorityEvidence": true,
+        "features": { "backgroundAnalysis": "fastest", "priorityEvidence": true },
+        "patreon": { "connected": true, "lastSyncAt": "2026-10-02T11:50:00.000Z" }
+      },
+      "expect": {
+        "valid": true,
+        "plan": "pro",
+        "status": "trial",
+        "trial": true,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "fastest",
+        "historyDays": 90,
+        "patreonConnected": true,
+        "planLine": "Plan: GPRL Pro (Patreon) - trial"
+      }
+    },
+    {
+      "name": "plus, cancelled but active until the end of the paid period",
+      "body": {
+        "plan": "plus",
+        "planLabel": "GPRL Plus",
+        "status": "canceled_active",
+        "trial": false,
+        "processingPriority": 2,
+        "priorityEvidence": false,
+        "advancedAnalytics": true,
+        "experimentalAccess": false,
+        "supporterBadge": true,
+        "historyDays": 730,
+        "features": {
+          "plan": "plus",
+          "processingPriority": 2,
+          "supporterBadge": true,
+          "customization": true,
+          "historyDays": 730,
+          "analytics": "extended",
+          "improvedRecommendations": true,
+          "comparisonTools": true,
+          "backgroundAnalysis": "faster",
+          "priorityEvidence": false,
+          "experimentalAccess": false
+        },
+        "entitledUntil": "2026-11-02T00:00:00.000Z",
+        "patreon": { "connected": true, "lastSyncAt": "2026-10-02T09:00:00.000Z" },
+        "generatedAt": "2026-10-02T12:00:00.000Z"
+      },
+      "expect": {
+        "valid": true,
+        "plan": "plus",
+        "status": "canceled_active",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "faster",
+        "historyDays": 730,
+        "patreonConnected": true,
+        "planLine": "Plan: GPRL Plus (Patreon) - cancelled, active until 2026-11-02"
+      }
+    },
+    {
+      "name": "supporter, payment declined (past due)",
+      "body": {
+        "plan": "supporter",
+        "planLabel": "GPRL Supporter",
+        "status": "past_due",
+        "trial": false,
+        "priorityEvidence": false,
+        "historyDays": 365,
+        "features": { "plan": "supporter", "backgroundAnalysis": "normal", "historyDays": 365 },
+        "entitledUntil": null,
+        "patreon": { "connected": true, "lastSyncAt": "2026-10-02T11:59:59.000Z" },
+        "generatedAt": "2026-10-02T12:00:00.000Z"
+      },
+      "expect": {
+        "valid": true,
+        "plan": "supporter",
+        "status": "past_due",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "normal",
+        "historyDays": 365,
+        "patreonConnected": true,
+        "planLine": "Plan: GPRL Supporter (Patreon) - payment issue"
+      }
+    },
+    {
+      "name": "former patron (expired, plan back to free)",
+      "body": {
+        "plan": "free",
+        "planLabel": "Free",
+        "status": "expired",
+        "trial": false,
+        "priorityEvidence": false,
+        "historyDays": 90,
+        "features": { "plan": "free", "backgroundAnalysis": "normal", "historyDays": 90 },
+        "entitledUntil": "2026-09-30T00:00:00.000Z",
+        "patreon": { "connected": true, "lastSyncAt": "2026-10-01T12:00:00.000Z" },
+        "generatedAt": "2026-10-02T12:00:00.000Z"
+      },
+      "expect": {
+        "valid": true,
+        "plan": "free",
+        "status": "expired",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "normal",
+        "historyDays": 90,
+        "patreonConnected": true,
+        "planLine": "Plan: Free - Patreon membership expired"
+      }
+    },
+    {
+      "name": "empty object: every field missing -> Free",
+      "body": {},
+      "expect": {
+        "valid": true,
+        "plan": "free",
+        "status": "none",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "normal",
+        "historyDays": 90,
+        "patreonConnected": false,
+        "planLine": "Plan: Free"
+      }
+    },
+    {
+      "name": "free plan claiming fastest analysis, Priority Evidence, a Pro label and unknown members (all ignored)",
+      "body": {
+        "plan": "free",
+        "planLabel": "GPRL Pro",
+        "status": "active",
+        "trial": true,
+        "priorityEvidence": true,
+        "processingPriority": 3,
+        "unlimited": true,
+        "features": {
+          "plan": "pro",
+          "backgroundAnalysis": "fastest",
+          "priorityEvidence": true,
+          "analyzerThreads": 64
+        },
+        "patreon": { "connected": false, "lastSyncAt": null, "accessToken": "never-read" }
+      },
+      "expect": {
+        "valid": true,
+        "plan": "free",
+        "status": "active",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "normal",
+        "historyDays": 90,
+        "patreonConnected": false,
+        "planLine": "Plan: Free"
+      }
+    },
+    {
+      "name": "plus claiming fastest analysis and Priority Evidence (clamped to faster, no PE)",
+      "body": {
+        "plan": "plus",
+        "status": "active",
+        "priorityEvidence": true,
+        "features": { "backgroundAnalysis": "fastest", "priorityEvidence": true },
+        "patreon": { "connected": true, "lastSyncAt": "2026-10-02T11:00:00.000Z" }
+      },
+      "expect": {
+        "valid": true,
+        "plan": "plus",
+        "status": "active",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "faster",
+        "historyDays": 90,
+        "patreonConnected": true,
+        "planLine": "Plan: GPRL Plus (Patreon)"
+      }
+    },
+    {
+      "name": "pro plan with an expired membership (contradictory -> Free)",
+      "body": {
+        "plan": "pro",
+        "status": "expired",
+        "priorityEvidence": true,
+        "features": { "backgroundAnalysis": "fastest" },
+        "patreon": { "connected": true, "lastSyncAt": "2026-10-02T11:00:00.000Z" }
+      },
+      "expect": {
+        "valid": true,
+        "plan": "free",
+        "status": "expired",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "normal",
+        "historyDays": 90,
+        "patreonConnected": true,
+        "planLine": "Plan: Free - Patreon membership expired"
+      }
+    },
+    {
+      "name": "pro plan without a status (missing -> none -> Free)",
+      "body": { "plan": "pro", "features": { "backgroundAnalysis": "fastest" } },
+      "expect": {
+        "valid": true,
+        "plan": "free",
+        "status": "none",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "normal",
+        "historyDays": 90,
+        "patreonConnected": false,
+        "planLine": "Plan: Free"
+      }
+    },
+    {
+      "name": "unknown plan and wrong member types",
+      "body": {
+        "plan": "ultra",
+        "status": 7,
+        "trial": "yes",
+        "priorityEvidence": "true",
+        "historyDays": "all",
+        "features": "fastest",
+        "patreon": true
+      },
+      "expect": {
+        "valid": true,
+        "plan": "free",
+        "status": "none",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "normal",
+        "historyDays": 90,
+        "patreonConnected": false,
+        "planLine": "Plan: Free"
+      }
+    },
+    {
+      "name": "an array is not an entitlement",
+      "body": [{ "plan": "pro", "status": "active" }],
+      "expect": {
+        "valid": false,
+        "plan": "free",
+        "status": "none",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "normal",
+        "historyDays": 90,
+        "patreonConnected": false,
+        "planLine": "Plan: Free"
+      }
+    },
+    {
+      "name": "malformed JSON text",
+      "bodyText": "{\"plan\":\"pro\",\"status\":\"active\",",
+      "expect": {
+        "valid": false,
+        "plan": "free",
+        "status": "none",
+        "trial": false,
+        "priorityEvidence": false,
+        "backgroundAnalysis": "normal",
+        "historyDays": 90,
+        "patreonConnected": false,
+        "planLine": "Plan: Free"
+      }
+    }
+  ]
+}
