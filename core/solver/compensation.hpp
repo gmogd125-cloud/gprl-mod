@@ -1,5 +1,5 @@
 #pragma once
-// Lockstep COMPENSATION planner `gprl-clone-sa/4` (docs/SHIP_SOLVER.md §4, decisions SH-D6 / SH-D7;
+// Lockstep COMPENSATION planner `gprl-clone-sa/5` (docs/SHIP_SOLVER.md §4, decisions SH-D6 / SH-D7;
 // PROMPT §2, §4, §5): the sequence-adjusted window of a CONNECTED-CONTROL input (ship by default)
 // measured without delayed replays.
 //
@@ -49,7 +49,7 @@
 
 namespace gprl::solver::comp {
 
-constexpr char const* kCompSolverVersion = "gprl-clone-sa/4";
+constexpr char const* kCompSolverVersion = "gprl-clone-sa/5";
 
 /// Every threshold in ONE versioned object (DEV DEFAULTS; docs/SHIP_SOLVER.md §4.2).
 struct CompConfig {
@@ -58,7 +58,9 @@ struct CompConfig {
     int maxFollowers = 3;                 // comp1..comp3
     int offsetRangeTicks = 3;             // a follower's offset stays within s +- this
     int probeOffsetTicks = 1;             // the response probe moves one follower by this much more
-    int maxTrialsPerInput = 40;           // uniform + probes + verifications charged to one input
+    int maxTrialsPerInput = 64;           // uniform + probes + verifications charged to one input (40 until v0.14.5: a fully
+                                          // compensable input with 2 followers needs 16 slots x 3 trials = 48 and ended
+                                          // `sa_not_measured_budget`, i.e. excluded; trials are ~2.7x shorter since flySeconds 0.75)
     int verifyRoundings = 2;              // verification trials per (shift, k) at most
     int lookaheadSlots = 1;               // undecided slots beyond the frontier that may run trials at once (per side)
     double priorityMaxLocalWidthTicks = 12.0;   // the engine skips the search for wider local windows (sa_not_measured_budget)

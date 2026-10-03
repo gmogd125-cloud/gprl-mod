@@ -655,6 +655,32 @@ bool calibrationDisplayFromJson(json::Value const& response, CalibrationDisplay&
             }
         }
     }
+    // v0.14.6: why the last session gave nothing (root `note`, a string or null), every state
+    if (auto* note = response.find("note"); note && note->isString()) {
+        // ASCII only (GD's bitmap fonts): U+2013 / U+2014 / U+2026 become '-' / '-' / "...",
+        // sigma (U+03C3) "sigma", every other non-ASCII byte is dropped
+        std::string const& raw = note->asString();
+        std::string text;
+        for (size_t i = 0; i < raw.size() && text.size() < 320; ++i) {
+            unsigned char const c = static_cast<unsigned char>(raw[i]);
+            if (c < 0x80) {
+                if (c >= 0x20) text.push_back(static_cast<char>(c));
+                continue;
+            }
+            if (c == 0xE2 && i + 2 < raw.size() && static_cast<unsigned char>(raw[i + 1]) == 0x80) {
+                unsigned char const t = static_cast<unsigned char>(raw[i + 2]);
+                if (t == 0x93 || t == 0x94) text.push_back('-');
+                else if (t == 0xA6) text += "...";
+                i += 2;
+                continue;
+            }
+            if (c == 0xCF && i + 1 < raw.size() && static_cast<unsigned char>(raw[i + 1]) == 0x83) {
+                text += "sigma";
+                i += 1;
+            }
+        }
+        d.sessionNote = text;
+    }
     // the verification status (2026-10-02): every state, from the root or the display object
     {
         json::Value const* vs = response.find("verificationStatus");

@@ -9,6 +9,7 @@
 #include "../core/telemetry.hpp"
 #include "Clipper.hpp"
 #include "Environment.hpp"
+#include "Hud.hpp"
 #include "Settings.hpp"
 #include "Telemetry.hpp"
 #include "solver/GdOracle.hpp"
@@ -206,6 +207,13 @@ env::MenuState pollEnvironment(bool atAttemptStart) {
         if (menus.noclip) {
             s.attempt.noclipSeen = true;
             s_counters.noclipSeen = true;
+            // v0.14.6: once per game launch, say what noclip does to the rating (owner report
+            // 2026-10-03: Ship "stuck at 21 %" - 92 % of the Ship inputs were noclip attempts)
+            static bool noclipNoticeShown = false;
+            if (!noclipNoticeShown) {
+                noclipNoticeShown = true;
+                hud::notify(display::kNoclipNotice, hud::ToastKind::Info, 10.f);
+            }
         }
         if (s.trust != TrustState::Allowed) s.attempt.untrustedSeen = true;
     }

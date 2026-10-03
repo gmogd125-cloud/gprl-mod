@@ -15,6 +15,15 @@
 // (reason `unsettled`), the same as a shift the engine could not run, so the window's edge is
 // never widened by it. Pure rules, host-tested (tests/settle_tests.cpp); the engine
 // (src/solver/CloneEngine.cpp simStep / advance / runSequence) feeds the facts.
+//
+// v0.14.6 (`gprl-clone/6`): `flySeconds` 2.0 -> 0.75. Measured on the owner's 2,218 Ship inputs of
+// 2026-10-03 (mod v0.14.0-v0.14.3): a flying copy needs `flySeconds` of recorded run AFTER its
+// input, so every input made in the last 2 s before a death, a noclip would-be death or a restart
+// ended without a window (`no_pass_death_unrelated` 46 %, `cut_by_restart` 11 %,
+// `sa_death_in_span` 8 %) and 33 inputs were left as rating evidence: the Ship calibration could
+// not move. In a hard flying section most inputs are that close to the next death. 0.75 s is
+// still longer than a ship needs to cross a corridor (a mistimed input shows within ~0.4 s), and
+// a compensated trial has to be alive 0.75 s after its LAST moved follower.
 #include <algorithm>
 #include <cstdint>
 
@@ -26,7 +35,7 @@ struct SettleConfig {
     bool enabled = true;
     double maxSeconds = 8.0;    // look-ahead end: a copy still unsettled here is `unsettled` (not tested)
     int groundTicks = 24;       // 0.1 s on the ground in a ground mode = settled
-    double flySeconds = 2.0;    // flying modes cannot touch the ground: alive this long after the input = settled
+    double flySeconds = 0.75;   // flying modes cannot touch the ground: alive this long after the input = settled (2.0 until v0.14.5)
 };
 inline constexpr SettleConfig kSettle{};
 

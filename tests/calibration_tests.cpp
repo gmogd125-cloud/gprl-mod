@@ -713,6 +713,21 @@ void testMissingGamemodes() {
     SECTION("missingGamemodes: read in every state (a visible answer with nothing missing)");
     CHECK(calibrationDisplayFromJson(parse(R"({"displayState":"visible","practicalSigma":121,"missingGamemodes":[]})"), d));
     CHECK(!d.locked() && d.missingGamemodes.empty());
+
+    // v0.14.6: the server's `note` (why the last session gave nothing), ASCII for GD's fonts
+    SECTION("sessionNote: the root `note`, every state, ASCII, bounded; null / absent / non-string = empty");
+    CHECK(calibrationDisplayFromJson(parse(R"({"displayState":"locked","note":"Your last session on Bloodbath (10565740) did not count: a mod menu without a GPRL state adapter was loaded (mod menu without a state adapter: Mega Hack (absolllute.megahack)). Sessions played without bots or changed physics feed calibration and ratings, on any level."})"), d));
+    CHECK(d.sessionNote.rfind("Your last session on Bloodbath (10565740) did not count: a mod menu without a GPRL state adapter was loaded", 0) == 0);
+    CHECK(calibrationDisplayFromJson(parse("{\"displayState\":\"visible\",\"practicalSigma\":121,\"note\":\"Noclip was on: no Practical \xCF\x83/s \xE2\x80\x93 reduced weight\xE2\x80\xA6\"}"), d));
+    CHECK(d.sessionNote == "Noclip was on: no Practical sigma/s - reduced weight...");
+    CHECK(calibrationDisplayFromJson(parse(R"({"displayState":"locked","note":null})"), d));
+    CHECK(d.sessionNote.empty());
+    CHECK(calibrationDisplayFromJson(parse(R"({"displayState":"locked","note":42})"), d));
+    CHECK(d.sessionNote.empty());
+    CHECK(calibrationDisplayFromJson(parse(R"({"displayState":"locked"})"), d));
+    CHECK(d.sessionNote.empty());
+    CHECK(calibrationDisplayFromJson(parse("{\"displayState\":\"locked\",\"note\":\"" + std::string(900, 'n') + "\"}"), d));
+    CHECK(d.sessionNote.size() == 320);
 }
 
 int main(int argc, char** argv) {

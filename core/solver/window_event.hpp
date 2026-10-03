@@ -28,8 +28,8 @@
 
 namespace gprl::solver {
 
-constexpr char const* kSolverVersion = "gprl-clone/5";       // v0.14.0: lockstep compensation for connected-control modes (docs/SHIP_SOLVER.md); /4 = v0.11.0 settled look-ahead; /3 = v0.8.0 isolated simulator
-constexpr char const* kSolverVersionCbf = "gprl-clone/5-cbf";
+constexpr char const* kSolverVersion = "gprl-clone/6";       // v0.14.6: flying modes settle after 0.75 s instead of 2 s (core/solver/settle.hpp); /5 = v0.14.0 lockstep compensation for connected-control modes (docs/SHIP_SOLVER.md); /4 = v0.11.0 settled look-ahead; /3 = v0.8.0 isolated simulator
+constexpr char const* kSolverVersionCbf = "gprl-clone/6-cbf";
 inline char const* solverVersionFor(bool refined) { return refined ? kSolverVersionCbf : kSolverVersion; }
 
 struct WindowEventContext {

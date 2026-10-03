@@ -304,6 +304,11 @@ struct CalibrationDisplay {
     // `missingGamemodes` of GET /v1/me/calibration: required by visibility.requiredGamemodes, not
     // calibrated yet), in the server's order. Read in every state; absent / malformed = empty.
     std::vector<std::string> missingGamemodes;
+    // v0.14.6: the server's root `note` (api/src/routes/calibration.ts lastSessionNote): why the
+    // player's LAST session gave nothing ("... did not count: a mod menu without a GPRL state
+    // adapter was loaded (...)") or what noclip does to it; empty when it counted normally. ASCII,
+    // at most 320 characters. Shown first under "What to play next" (it carries no sigma/s).
+    std::string sessionNote;
 
     // PRIVATE sigma/s (owner decision 2026-10-01; docs/contracts/calibration.md "Private sigma/s"):
     // the player's OWN estimate from `privateSigma` { raw, practical, confidence,

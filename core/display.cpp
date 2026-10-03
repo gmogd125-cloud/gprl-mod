@@ -163,6 +163,37 @@ std::string levelCountsLine(bool levelCounts, std::string const& reason) {
     return line;
 }
 
+// ---- why a session does not feed the rating ----
+
+std::string unratedSessionNotice(std::string const& ratableReason) {
+    std::string const r = asciiDash(ratableReason);
+    // "mod menu without a state adapter: <name> (<id>)" (trust.ts classifyMods; reasons joined by "; ")
+    static constexpr std::string_view kMenu = "mod menu without a state adapter: ";
+    if (auto at = r.find(kMenu); at != std::string::npos) {
+        size_t const from = at + kMenu.size();
+        size_t end = r.find(" (", from);
+        size_t const semi = r.find(';', from);
+        if (end == std::string::npos || (semi != std::string::npos && semi < end)) end = semi;
+        std::string name = r.substr(from, end == std::string::npos ? std::string::npos : end - from);
+        if (name.size() > 40) name.resize(40);
+        if (!name.empty())
+            return "GPRL: this session is NOT rated. " + name + " is loaded and GPRL cannot see whether its cheats are on. Disable " + name +
+                   " while you play to calibrate (the Eclipse menu works).";
+    }
+    static constexpr std::string_view kUnknown = "unknown gameplay-affecting mod ";
+    if (auto at = r.find(kUnknown); at != std::string::npos) {
+        size_t const from = at + kUnknown.size();
+        size_t const end = r.find(';', from);
+        std::string id = r.substr(from, end == std::string::npos ? std::string::npos : end - from);
+        if (id.size() > 60) id.resize(60);
+        if (!id.empty()) return "GPRL: this session is NOT rated: unknown gameplay mod " + id + " is loaded. Disable it to calibrate.";
+    }
+    if (r.empty()) return "GPRL: this session is NOT rated.";
+    std::string text = "GPRL: this session is NOT rated: " + r;
+    if (text.size() > 160) text.resize(160);
+    return text;
+}
+
 // ---- level hints ----
 
 std::string demonDifficultyName(int gdDemonDifficulty, bool isDemon) {

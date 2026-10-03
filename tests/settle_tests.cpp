@@ -88,7 +88,7 @@ void testConfig() {
     narrow.maxSeconds = 0.2;
     CHECK(lookAheadSeconds(narrow, 0.5) == 1.0);
     // the defaults the mod ships
-    CHECK(kSettle.enabled && kSettle.maxSeconds == 8.0 && kSettle.groundTicks == 24 && kSettle.flySeconds == 2.0);
+    CHECK(kSettle.enabled && kSettle.maxSeconds == 8.0 && kSettle.groundTicks == 24 && kSettle.flySeconds == 0.75);
 }
 
 }  // namespace

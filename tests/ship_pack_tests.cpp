@@ -404,7 +404,7 @@ void test7Speeds() {
 }
 
 void test8Cbf() {
-    SECTION("#8 CBF sub-tick: local edges within 1/8 tick of the analytic boundary, W_local ⊆ W_SA, placement cbf, gprl-clone/5-cbf");
+    SECTION("#8 CBF sub-tick: local edges within 1/8 tick of the analytic boundary, W_local ⊆ W_SA, placement cbf, gprl-clone/6-cbf");
     auto s = schedule({{100, true}, {108, false}});
     World w = criticalWorld(s, 2.4);
     KinematicOracle o(w, true);
@@ -456,7 +456,7 @@ void test8Cbf() {
     auto built = buildTimingResultEvent(ctx, ev, &m.result, status::statusOf({}, localFacts(ev), saFacts(&m.result), {}), true);
     CHECK_MSG(built.ok, built.error);
     CHECK(built.payload.local && built.payload.local->early.placement == "cbf");
-    CHECK(built.payload.solverVersion == "gprl-clone/5-cbf");
+    CHECK(built.payload.solverVersion == "gprl-clone/6-cbf");
 }
 
 void test9MovingObstacle() {

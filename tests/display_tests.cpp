@@ -199,6 +199,26 @@ void testLevelCountsLine() {
     CHECK(levelCountsLine(false, "Level rating unknown: not counted.") == "Not a rated demon: not on the levels list (still feeds your calibration) - Level rating unknown: not counted.");
 }
 
+void testUnratedSessionNotice() {
+    SECTION("unratedSessionNotice: the server's ratableReason in the player's words (v0.14.6)");
+    // the live reason of the owner's friend (sessions.trust_reason, 2026-10-03)
+    CHECK(unratedSessionNotice("mod menu without a state adapter: Mega Hack (absolllute.megahack)")
+          == "GPRL: this session is NOT rated. Mega Hack is loaded and GPRL cannot see whether its cheats are on. Disable Mega Hack while you play to "
+             "calibrate (the Eclipse menu works).");
+    // several reasons: the mod-menu one wins wherever it stands
+    CHECK(unratedSessionNotice("client-reported integrity state \"flagged\"; mod menu without a state adapter: OpenHack (prevter.openhack); noclip active")
+              .find("OpenHack is loaded") != std::string::npos);
+    CHECK(unratedSessionNotice("mod menu without a state adapter: Mega Hack; physics modified (tps 480)").find("Disable Mega Hack while") != std::string::npos);
+    CHECK(unratedSessionNotice("unknown gameplay-affecting mod some.hack; noclip active")
+          == "GPRL: this session is NOT rated: unknown gameplay mod some.hack is loaded. Disable it to calibrate.");
+    CHECK(unratedSessionNotice("physics modified (tps 480, tps bypass)") == "GPRL: this session is NOT rated: physics modified (tps 480, tps bypass)");
+    CHECK(unratedSessionNotice("") == "GPRL: this session is NOT rated.");
+    // bounded and ASCII (GD's bitmap fonts)
+    CHECK(unratedSessionNotice(std::string(500, 'x')).size() == 160);
+    CHECK(unratedSessionNotice("physics \xE2\x80\x93 modified") == "GPRL: this session is NOT rated: physics - modified");
+    CHECK(std::string(kNoclipNotice).find("Turn noclip off to calibrate") != std::string::npos);
+}
+
 void testLevelHints() {
     SECTION("demonDifficultyName / levelNameHint: GJGameLevel -> session hints");
     CHECK(demonDifficultyName(0, true) == "hard");
@@ -304,6 +324,7 @@ int main() {
     testCoverage();
     testAsciiDash();
     testLevelCountsLine();
+    testUnratedSessionNotice();
     testLevelHints();
     testAttemptClock();
     testLiveTag();

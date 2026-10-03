@@ -107,6 +107,27 @@ std::string asciiDash(std::string const& s);
 /// own `levelCountsReason` is appended after " - " when it says more, ASCII-only).
 std::string levelCountsLine(bool levelCounts, std::string const& reason);
 
+// ---- why a session does not feed the rating (V1CreateSessionResponse.ratable / ratableReason) ----
+
+/// v0.14.6 (owner report 2026-10-03: "0 % calibrating for my friend" = Mega Hack loaded, every
+/// session stored unrated, nothing on screen said why): the top-right notice for a session the
+/// server answered `ratable: false` to, from its `ratableReason` (api/src/processing/trust.ts):
+///   "mod menu without a state adapter: Mega Hack (absolllute.megahack)"
+///       -> "GPRL: this session is NOT rated. Mega Hack is loaded and GPRL cannot see whether its
+///           cheats are on. Disable Mega Hack while you play to calibrate (the Eclipse menu works)."
+///   "unknown gameplay-affecting mod some.id"
+///       -> "GPRL: this session is NOT rated: unknown gameplay mod some.id is loaded. Disable it to calibrate."
+///   anything else -> "GPRL: this session is NOT rated: <reason>" (ASCII, at most 160 characters)
+///   ""            -> "GPRL: this session is NOT rated."
+/// Several reasons are joined by "; " on the wire: the first mod-menu reason wins.
+std::string unratedSessionNotice(std::string const& ratableReason);
+
+/// The same once per game launch for noclip (the server still stores a noclip session, but
+/// `noclip-evidence/1` keeps only the inputs before an attempt's first would-be death, at reduced
+/// weight and at most a quarter of a gamemode's evidence).
+inline constexpr char const* kNoclipNotice =
+    "GPRL: noclip is on. Noclip attempts barely count (only the inputs before the first would-be death, at reduced weight). Turn noclip off to calibrate.";
+
 // ---- level hints (POST /v1/client/sessions, never trusted server side) ----
 
 /// GJGameLevel::m_demonDifficulty -> V1DemonDifficulty name for a demon: 3 easy, 4 medium,

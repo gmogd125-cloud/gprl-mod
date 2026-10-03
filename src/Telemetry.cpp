@@ -14,6 +14,7 @@
 #include <set>
 #include <thread>
 
+#include "../core/display.hpp"
 #include "../core/live_recalc.hpp"
 #include "../core/ringbuffer.hpp"
 #include "Clipper.hpp"
@@ -182,6 +183,19 @@ std::string levelRatingText(api::LevelRating const& r) {
     if (r.stars > 0) text += fmt::format(", {} star{}", r.stars, r.stars == 1 ? "" : "s");
     text += " (" + (r.source.empty() ? std::string("none") : r.source) + ")";
     return display::asciiDash(text);
+}
+
+// ---- v0.14.6: why a session does not feed the rating ----
+
+/// Worker thread: the server answered `ratable: false` for the session it just opened. Says why,
+/// top right, once per game launch and reason (owner report 2026-10-03: a friend with Mega Hack
+/// played twenty sessions that were all stored unrated and saw only "0 % calibrating").
+void unratedNotice(std::string const& reason) {
+    Loader::get()->queueInMainThread([reason] {
+        static std::set<std::string> shown;
+        std::string text = display::unratedSessionNotice(reason);
+        if (shown.insert(text).second) hud::notify(text, hud::ToastKind::Warning, 10.f);
+    });
 }
 
 // ---- v0.12.2 Patreon: main-thread outcomes (queued by the worker) ----
@@ -465,6 +479,7 @@ private:
                           res.levelCountsReason.empty() ? "" : ": " + display::asciiDash(res.levelCountsReason), levelRatingText(res.levelRating),
                           s.start.hints.stars ? std::to_string(*s.start.hints.stars) : "-", s.start.hints.isDemon ? (*s.start.hints.isDemon ? "yes" : "no") : "-",
                           s.start.hints.demonDifficulty.empty() ? "-" : s.start.hints.demonDifficulty, s.start.hints.name.empty() ? "-" : "\"" + s.start.hints.name + "\"");
+                if (!res.ratable) unratedNotice(res.ratableReason);
             }
             else {
                 s.mode = SessionMode::Unsent;
@@ -715,6 +730,7 @@ private:
                 st.ratableReason = created.ratableReason;
                 st.telemetryRevision = created.telemetryRevision;
             });
+            if (!created.ratable) unratedNotice(created.ratableReason);
             setError(fmt::format("session {} invalidated by the server (HTTP {}); reopened as {}", oldId, status, m_session.id));
         }
         else {

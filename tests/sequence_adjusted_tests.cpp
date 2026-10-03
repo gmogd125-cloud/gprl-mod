@@ -1694,7 +1694,7 @@ void testShipCorrections() {
 }
 
 void testCbfRefine() {
-    SECTION("cbfRefine: sub-tick oracle -> local and SA edges within 1/8 tick of the analytic boundary; placement cbf, gprl-clone/5-cbf");
+    SECTION("cbfRefine: sub-tick oracle -> local and SA edges within 1/8 tick of the analytic boundary; placement cbf, gprl-clone/6-cbf");
     auto s = schedule({{100, true}, {118, false}, {136, true}});
     World w = waveWorld();
     auto path = freePath(w, s, 330, true);
@@ -1749,7 +1749,7 @@ void testCbfRefine() {
         auto built = buildTimingResultEvent(ctx, ev, &r, status::statusOf({}, localFacts(ev), saFacts(&r), {}), true);
         CHECK_MSG(built.ok, built.error);
         CHECK(built.payload.local && built.payload.local->early.placement == "cbf");
-        CHECK(built.payload.solverVersion == "gprl-clone/5-cbf");
+        CHECK(built.payload.solverVersion == "gprl-clone/6-cbf");
     }
     // without CBF: whole ticks, placement tick, the lattice count is exact
     KinematicOracle whole(w, false);

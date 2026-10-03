@@ -1510,6 +1510,25 @@ was left lets a later MenuLayer try again).
 8. When a job finishes: `analysis done - ...` then `analysis of level <id> sent - stored yes ...`
    (or `not sent: the server does not know this level version yet` before the session existed).
 
+## v0.14.6 (Ship data reaches the calibration; why a session does not count)
+
+Flying modes (ship, ufo, wave, swing) settle 0.75 s after the last moved input instead of 2 s
+(`core/solver/settle.hpp`; solver `gprl-clone/6`, `gprl-clone-sa/5`; docs/SHIP_SOLVER.md §10.0),
+64 compensation trials per input. In-game check, on a level with ship sections, noclip OFF:
+
+- The ready line names `solver gprl-clone/6, sa gprl-clone-sa/5`.
+- In the 5 s summaries the share of `death unrelated` / `restart` under `not windowable` drops
+  (before: about two thirds of all Ship inputs), `results ... statuses ok N, low N` rises, and
+  `compensation (ship): ... decided N` is no longer a small fraction of `jobs`.
+- `GPRL comp: input ... undecided(sa_death_in_span)` lines only for inputs in the last ~0.75 s
+  before a death.
+- With Mega Hack (or any menu the server lists `menu_no_adapter`) loaded: entering a level shows,
+  top right, "GPRL: this session is NOT rated. Mega Hack is loaded ..." once per game launch.
+- With Eclipse noclip on: the first attempt shows "GPRL: noclip is on. Noclip attempts barely
+  count ..." once per game launch.
+- Home screen while calibrating: the "What to play next" card starts with the server's note about
+  the last session (orange) when that session gave nothing.
+
 ## v0.14.0 (Ship: lockstep compensation; docs/SHIP_SOLVER.md)
 
 The connected-control inputs (ship) get their sequence-adjusted window from the lockstep

@@ -159,7 +159,7 @@ void testSABudget() {
     // the load guard leaves the throttle for the local jobs
     CHECK(gprl::solver::sequence::loadAllows(3.0, kBudget.throttleOnMs, sc));
     CHECK(!gprl::solver::sequence::loadAllows(3.3, kBudget.throttleOnMs, sc));
-    CHECK(std::string(gprl::solver::kSA.version) == "gprl-clone-sa/4");
+    CHECK(std::string(gprl::solver::kSA.version) == "gprl-clone-sa/5");
     CHECK(gprl::solver::kSA.maxChain == 3 && gprl::solver::kSA.maxTrialsPerInput == 40 && gprl::solver::kSA.maxInputsPerJob == 4);
     CHECK(gprl::solver::kSA.maxJobSpanTicks == 96.0 && gprl::solver::kSA.queueMax == 16 && gprl::solver::kSA.ringReserveSteps == 64);
     CHECK(gprl::solver::kSA.priorityMaxLocalWidthTicks == 12.0 && gprl::solver::kSA.refinePointsSubtick == 3);

@@ -60,7 +60,7 @@
 
 namespace gprl::solver {
 
-constexpr char const* kSASolverVersion = "gprl-clone-sa/4";   // v0.14.0: every sequence window of this build (the lockstep compensation planner for connected-control modes, core/solver/compensation.hpp, and the delayed replay for the rest); /3 = v0.11.0 settled look-ahead; /2 = v0.8.0 isolated simulator
+constexpr char const* kSASolverVersion = "gprl-clone-sa/5";   // v0.14.6: flying trials settle after 0.75 s, 64 compensation trials per input; /4 = v0.14.0: every sequence window of this build (the lockstep compensation planner for connected-control modes, core/solver/compensation.hpp, and the delayed replay for the rest); /3 = v0.11.0 settled look-ahead; /2 = v0.8.0 isolated simulator
 
 /// Every threshold of the SA solver in ONE versioned object (DEV DEFAULTS; the ready line names
 /// the version). `horizonSeconds` / `maxShiftTicks` are the engine's settings at job time.

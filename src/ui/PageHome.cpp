@@ -193,6 +193,8 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
     }
     std::vector<std::string> steps = sigmaVisible ? std::vector<std::string>{} : nextSteps(cal, disp, 2);
     std::string const missingLock = missingGamemodesLockText(disp);
+    // v0.14.6: why the last session gave nothing (the server's `note`), first in the card, orange
+    std::string const sessionNote = sigmaVisible ? std::string() : disp.sessionNote;
 
     std::string key = fmt::format("profile|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}", site.profileState.generation, site.ranksState.generation,
                                   st.username, displayName, gdVerified, static_cast<int>(disp.state), num(headline), num(raw), num(practical),
@@ -201,6 +203,7 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
                                   p ? p->leaderboardPosition : -1);
     for (auto const& s : steps) key += "|" + s;
     key += "|" + missingLock;
+    key += "|" + sessionNote;
     if (p) {
         for (auto const& g : p->gamemodes) key += fmt::format("|{}:{}", g.sigma ? *g.sigma : -1.0, g.calibrationProgress);
     }
@@ -279,7 +282,12 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
         if (cardTop - cardBottom > 30.f) {
             auto c = card(m_page, rx, cardBottom, rw, cardTop - cardBottom, "What to play next", kCard, 230);
             float ty = cardTop - cardBottom - 16.f;
+            if (!sessionNote.empty()) {
+                auto para = paragraph(c, "! " + sessionNote, kPad, ty, rw - 2.f * kPad, 0.3f, kOrange);
+                ty -= para->getHeight() + 3.f;
+            }
             for (auto const& s : steps) {
+                if (ty < 6.f) break;
                 auto para = paragraph(c, "- " + s, kPad, ty, rw - 2.f * kPad, 0.33f, kWhite);
                 ty -= para->getHeight() + 3.f;
                 if (ty < 6.f) break;

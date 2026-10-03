@@ -329,7 +329,7 @@ void testCriticalCase() {
                 CHECK(built.payload.sequence.has_value());
                 if (built.payload.sequence) {
                     auto const& sq = *built.payload.sequence;
-                    CHECK(sq.solverVersion == std::string(kSASolverVersion) && sq.solverVersion == "gprl-clone-sa/4");
+                    CHECK(sq.solverVersion == std::string(kSASolverVersion) && sq.solverVersion == "gprl-clone-sa/5");
                     CHECK(std::find(sq.adaptationUsed.begin(), sq.adaptationUsed.end(), "comp1") != sq.adaptationUsed.end());
                     CHECK(sq.compensation.has_value());
                     if (sq.compensation) CHECK(!sq.compensation->earlyOffsetsMs.empty() || !sq.compensation->lateOffsetsMs.empty());
