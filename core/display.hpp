@@ -55,6 +55,10 @@ struct HistoryEntry {
     bool boundedEarly = true, boundedLate = true;
     std::string reason;      // drop reason when !ok
     std::string suffix;      // v0.7.0: "local 4.00 f / seq 10.75 f ok" once the timing_result arrived
+    // v0.15.0 (docs/SHIP_SOLVER.md §11.7): a connected-control input (Ship): the line's figure is
+    // the LOCAL window - this input moved with every other input FROZEN - and says so; the
+    // compensated window follows in the suffix ("compensated 15.0 f ok")
+    bool frozen = false;
 };
 
 struct HistoryLine {

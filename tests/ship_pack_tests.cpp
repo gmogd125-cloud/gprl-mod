@@ -16,197 +16,15 @@
 //   12 true isolated frame-perfect    local = sequence = one tick, decided, isolated
 //
 // Nothing here is a real level.
-#include "test_util.hpp"
-#include "kinematic_oracle.hpp"
-
-#include "../core/solver/compensation.hpp"
-#include "../core/solver/pass_planner.hpp"
-#include "../core/solver/timing_result_event.hpp"
-#include "../core/solver/timing_status.hpp"
-#include "../core/solver/timing_units.hpp"
-#include "../core/telemetry.hpp"
-
-#include <algorithm>
-#include <cmath>
-#include <cstdio>
-#include <functional>
-#include <string>
-#include <vector>
+#include "ship_worlds.hpp"
 
 using namespace gprl;
 using namespace gprl::solver;
 using namespace gprl::solver::comp;
 using namespace gprl::test::kin;
+using namespace gprl::test::ship;
 
 namespace {
-
-constexpr double T = kTickMs;
-constexpr double kH = 0.5 + 10.0 / 240.0;
-constexpr double kMargin = 0.0024;
-
-InputSchedule schedule(std::vector<std::pair<double, bool>> const& ticks) {
-    InputSchedule s;
-    for (auto const& [tick, down] : ticks) s.inputs.push_back({tick * T, 1, Button::Jump, down});
-    return s;
-}
-double frameOf(InputSchedule const& s, size_t i) { return s.inputs[i].tMs / T; }
-double earlyLimitOf(InputSchedule const& s, size_t i) {
-    double t = frameOf(s, i);
-    if (i == 0) return std::min(10.0, t);
-    return std::min(10.0, t - frameOf(s, i - 1) - kMargin);
-}
-double lateLimitOf(InputSchedule const& s, size_t i) {
-    if (i + 1 >= s.inputs.size()) return kNaN;
-    return frameOf(s, i + 1) - frameOf(s, i) - kMargin;
-}
-
-PassPlanner solveLocal(KinematicOracle& o, InputSchedule const& s, size_t i, bool subtick = false) {
-    PlannerConfig pc;
-    pc.subtick = subtick;
-    PassPlanner p(pc, earlyLimitOf(s, i));
-    p.setEarlyLimitKind(i == 0 ? LimitKind::AttemptStart : LimitKind::Neighbour);
-    double late = lateLimitOf(s, i);
-    if (!std::isnan(late)) p.setLateLimit(late);
-    o.setReference(s);
-    runAgainstOracle(o, p, 0, s, i, kH);
-    return p;
-}
-
-void oracleTrial(KinematicOracle& o, InputSchedule const& ref, InputSchedule const& sched, CompTrial const& t, CompOutcome& out) {
-    o.setReference(ref);
-    double first = t.moved.front().frame;
-    for (auto const& mv : t.moved) first = std::min(first, mv.frame);
-    double earliest = std::min(first, t.attributeAfterFrame);
-    std::vector<KinematicOracle::Dev> dev;
-    Outcome r = o.trialTrace(sched, (t.lookAheadFrame - earliest) / 240.0, t.devFromFrame * T, dev);
-    for (auto const& d : dev) out.dev.push_back({d.frame, d.dy, d.dvy});
-    switch (r.kind) {
-        case OutcomeKind::Survived: out.kind = CompOutcome::Kind::Pass; break;
-        case OutcomeKind::Resynced: out.kind = CompOutcome::Kind::Pass; out.rejoined = true; break;
-        case OutcomeKind::Died: {
-            out.kind = CompOutcome::Kind::Died;
-            out.deathFrame = r.tMs / T;
-            out.objectId = r.objectId;
-            std::vector<size_t> moved;
-            for (size_t k = 1; k < t.moved.size(); ++k) moved.push_back(static_cast<size_t>(t.moved[k].id) - 1);
-            out.laterFixed = laterFixedBefore(ref, static_cast<size_t>(t.moved.front().id) - 1, moved, r.tMs);
-            break;
-        }
-        case OutcomeKind::Invalid: out.kind = CompOutcome::Kind::Invalid; out.reason = r.reason; break;
-    }
-}
-
-struct Member {
-    size_t index = 0;
-    PassPlanner local;
-    CompPlanner comp;
-    WindowResult window;
-    SAResult result;
-    int trials = 0;
-};
-
-std::vector<Member> solveAll(KinematicOracle& o, InputSchedule const& s, std::vector<size_t> const& members, bool subtick = false, CompConfig cfg = kComp,
-                             std::vector<size_t> breaks = {}) {
-    std::vector<Member> out;
-    for (size_t i : members) {
-        Member m;
-        m.index = i;
-        m.local = solveLocal(o, s, i, subtick);
-        m.trials = runCompAgainstOracle(s, i, m.local, cfg, breaks, [&](InputSchedule const& sched, CompTrial const& t, CompOutcome& r) { oracleTrial(o, s, sched, t, r); }, m.comp);
-        m.window = m.local.result(s.inputs[i].tMs);
-        m.result = m.comp.result();
-        out.push_back(std::move(m));
-    }
-    return out;
-}
-
-double localWidthTicks(WindowResult const& w) { return (w.latestMs - w.earliestMs) / T; }
-double widthTicks(SAWindow const& w) { return w.late.edgeFrames() - w.early.edgeFrames(); }
-double localEdgeTicks(BoundaryResult const& b) { return localEdgeFrames(b); }
-bool downstream(WindowResult const& w) { return (w.early.bounded && w.early.edge.cause == EdgeCause::Downstream) || (w.late.bounded && w.late.edge.cause == EdgeCause::Downstream); }
-
-void printMember(char const* label, InputSchedule const& s, Member const& m) {
-    std::printf("  %s #%zu %s local [%+.2f,%+.2f] %.2f f%s | comp [%+.2f,%+.2f] %.2f f %s %s/%s trials %d | %s\n      local: %s\n", label, m.index,
-                s.inputs[m.index].down ? "press  " : "release", localEdgeTicks(m.window.early), localEdgeTicks(m.window.late), localWidthTicks(m.window),
-                downstream(m.window) ? " (downstream)" : "", m.result.sequence.early.edgeFrames(), m.result.sequence.late.edgeFrames(), widthTicks(m.result.sequence),
-                m.result.decided ? "decided" : "UNDECIDED", name(m.result.sequence.early.proof), name(m.result.sequence.late.proof), m.trials,
-                m.result.debug.empty() ? "" : m.result.debug[0].c_str(), m.local.describe().c_str());
-}
-
-// ---- worlds ----
-
-World shipBase() {
-    World w;
-    w.startMode = Mode::Ship;
-    w.startY = 0.0;
-    w.half = 3.0;
-    w.shipGravity = 0.03;
-    w.floor.pts = {{-100.0, -3.0}, {5000.0, -3.0}};
-    return w;
-}
-
-std::vector<State> pathOf(World w, InputSchedule const& s, int64_t ticks) {
-    w.spikes.clear();
-    KinematicOracle o(w);
-    return o.run(s, ticks);
-}
-
-/// Lethal bands around the recorded path: one rect per `every` ticks over [fromTick, toTick],
-/// `below(k)` units under and `above(k)` units over the path there (plus the hitbox half). The
-/// ship's hitbox is 2 x half wide, so a rect over ticks [k, k + every] takes the path's min / max y
-/// over the ticks whose x the hitbox can overlap while inside the rect (about +-3 ticks at speed 1).
-template <class Below, class Above>
-void bandsAround(World& w, std::vector<State> const& path, int fromTick, int toTick, Below&& below, Above&& above, int every = 2) {
-    int const n = static_cast<int>(path.size());
-    int const reach = static_cast<int>(std::ceil((w.half + 0.65) / 1.3)) + 1;
-    for (int k = fromTick; k <= toTick && k < n; k += every) {
-        auto const& a = path[static_cast<size_t>(k - 1)];
-        auto const& b = path[static_cast<size_t>(std::min(k - 1 + every, n - 1))];
-        double ymin = 1e9, ymax = -1e9;
-        for (int j = std::max(1, k - reach); j <= std::min(n, k + every + reach); ++j) {
-            ymin = std::min(ymin, path[static_cast<size_t>(j - 1)].y);
-            ymax = std::max(ymax, path[static_cast<size_t>(j - 1)].y);
-        }
-        w.spikes.push_back({a.x - 0.65, ymin - w.half - below(k) - 400.0, b.x + 0.65, ymin - w.half - below(k), 30});
-        w.spikes.push_back({a.x - 0.65, ymax + w.half + above(k), b.x + 0.65, ymax + w.half + above(k) + 400.0, 31});
-    }
-}
-
-/// A gentle ship flight that HOVERS: 6-tick holds every 16 ticks (thrust 0.08 x 6 ~ gravity 0.03 x 16),
-/// so the recorded path stays near one height and a changed hold moves it by a few units, not dozens.
-InputSchedule gentleFlight() {
-    return schedule({{100, true}, {106, false}, {116, true}, {122, false}, {132, true}, {138, false}, {148, true}, {154, false}, {164, true}, {170, false},
-                     {180, true}, {186, false}, {196, true}, {202, false}, {212, true}, {218, false}});
-}
-
-/// PROMPT §14.11: a press whose timing only works when the release compensates. DEV FIXTURE
-/// found by a parameter scan (scratch explorer, 2026-10-02): gravity 0.06, thrust 0.08, the ship
-/// rests on a floor that ENDS right after take-off (no landing: nothing re-joins by the floor
-/// clamp), presses at 100, releases at 108, and flies a per-tick corridor of `clear` units around
-/// its recorded path over ticks [112, 124]. Shifting the press alone changes the hold (dies at
-/// once); shifting press + release together moves the whole arc in time (dies after ~2 ticks);
-/// a DIFFERENT release offset restores the height (passes up to ~6 ticks early).
-World criticalWorld(InputSchedule const& s, double clear) {
-    World w = shipBase();
-    w.shipGravity = 0.06;
-    w.shipThrust = 0.08;
-    w.floor.pts = {{-100.0, -3.0}, {1.3 * 109.0, -3.0}, {1.3 * 109.5, -600.0}, {5000.0, -600.0}};
-    auto path = pathOf(w, s, 420);
-    for (int k = 112; k <= 124; ++k) {
-        auto const& a = path[static_cast<size_t>(k - 1)];
-        auto const& b = path[static_cast<size_t>(k)];
-        double ymin = std::min(a.y, b.y), ymax = std::max(a.y, b.y);
-        w.spikes.push_back({a.x - 0.65, ymin - w.half - clear - 400.0, b.x + 0.65, ymin - w.half - clear, 21});
-        w.spikes.push_back({a.x - 0.65, ymax + w.half + clear, b.x + 0.65, ymax + w.half + clear + 400.0, 22});
-    }
-    return w;
-}
-
-bool recordedSurvives(World const& w, InputSchedule const& s, double seconds) {
-    KinematicOracle o(w);
-    o.setReference(s);
-    return o.trial(0, s, seconds).passed();
-}
 
 // =============================================================================================
 
@@ -270,7 +88,9 @@ void test3HoldDuration() {
     for (auto const& st : freeRun.run(s, 420)) peak = std::max(peak, st.y);
     World w = shipBase();
     w.spikes.push_back({-100.0, peak + 3.0 + 4.0, 5000.0, peak + 300.0, 9});       // ceiling band 4 above the peak
-    w.spikes.push_back({1.3 * 150.0, -100.0, 5000.0, 6.0, 10});                   // floor band after take-off
+    // a floor band after take-off that ENDS: the ship must stay above it while it lasts, then it
+    // lands on the solid floor (every surviving arc re-joins the recorded run there)
+    w.spikes.push_back({1.3 * 150.0, -100.0, 1.3 * 205.0, 6.0, 10});
     KinematicOracle o(w);
     auto ms = solveAll(o, s, {0, 1});
     for (auto const& m : ms) printMember("hold", s, m);
@@ -404,12 +224,12 @@ void test7Speeds() {
 }
 
 void test8Cbf() {
-    SECTION("#8 CBF sub-tick: local edges within 1/8 tick of the analytic boundary, W_local ⊆ W_SA, placement cbf, gprl-clone/6-cbf");
+    SECTION("#8 CBF sub-tick: local edges within 1/8 tick of the analytic boundary, W_local ⊆ W_SA, placement cbf, gprl-clone/7-cbf");
     auto s = schedule({{100, true}, {108, false}});
     World w = criticalWorld(s, 2.4);
     KinematicOracle o(w, true);
     CHECK(recordedSurvives(w, s, 1.8));
-    CompConfig cfg = kComp;
+    CompConfig cfg = gprl::test::fixtureComp();
     auto ms = solveAll(o, s, {0}, true, cfg);
     auto const& m = ms[0];
     printMember("cbf", s, m);
@@ -456,7 +276,7 @@ void test8Cbf() {
     auto built = buildTimingResultEvent(ctx, ev, &m.result, status::statusOf({}, localFacts(ev), saFacts(&m.result), {}), true);
     CHECK_MSG(built.ok, built.error);
     CHECK(built.payload.local && built.payload.local->early.placement == "cbf");
-    CHECK(built.payload.solverVersion == "gprl-clone/6-cbf");
+    CHECK(built.payload.solverVersion == "gprl-clone/7-cbf");
 }
 
 void test9MovingObstacle() {

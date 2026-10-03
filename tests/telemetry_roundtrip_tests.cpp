@@ -790,7 +790,7 @@ void testTimingResultFixture0140() {
         CHECK(json::canonical(toJson(own)).find("compensation") == std::string::npos);
     }
     // revision 6 constants; the older goldens carry none of the vocabulary
-    CHECK(kTelemetryRevision == 6 && kCompensationRevision == 6);
+    CHECK(kTelemetryRevision == 7 && kCompensationRevision == 6);
     for (char const* older : {"telemetry/batch-timing-result.json", "telemetry/batch-timing-result-v071.json", "telemetry/batch-timing-result-v080.json"}) {
         std::string t = fixture(older);
         CHECK(t.find("\"comp1\"") == std::string::npos && t.find("compensated") == std::string::npos && t.find("\"compensation\"") == std::string::npos);
@@ -803,6 +803,174 @@ void testTimingResultFixture0140() {
 /// batch-capture.json must parse, validate, pass the invariants and re-canonicalise to the
 /// recorded bytes / SHA-256 / HMAC; the optional keys survive a round trip in both forms
 /// (absent = older client); the C++ validator mirrors validate.ts on the bad values.
+/// geode v0.15.0 (docs/SHIP_SOLVER.md §11, telemetry revision 7): the NEW golden
+/// tests/fixtures/telemetry/batch-timing-result-v0150.json - two Ship controls of the control
+/// solver "controls/1": a press whose compensated late edge re-joined approximately, its release
+/// with the PHASE tolerance of the hold, a press whose compensation only SURVIVED (never a pass:
+/// `sa_survives_no_rejoin`, the side undecided) and a release whose replay left the real run
+/// (`state_replay_failed`, no window, the `parity` block) - must parse, validate, pass the
+/// invariants and re-canonicalise to the recorded bytes; the `control` and `parity` blocks round-trip
+/// key for key; the malformed cases of shared/test/timing-result.test.ts are refused here too; the
+/// older goldens carry none of it.
+void testTimingResultFixture0150() {
+    SECTION("timing_result golden v0.15.0 (Ship controls): the control block (phase, re-join), sa_survives_no_rejoin, the parity block");
+    std::string text = fixture("telemetry/batch-timing-result-v0150.json");
+    std::string expectedText = fixture("telemetry/batch-timing-result-v0150.expected.json");
+    Batch batch;
+    std::string err;
+    CHECK_MSG(parseBatch(text, batch, &err), err);
+    CHECK_MSG(validateBatch(batch, &err), err);
+    CHECK_MSG(checkBatchInvariants(batch, -1, {}, &err), err);
+    CHECK(batch.clientBuild == "gprl-geode 0.15.0+win");
+    json::Value expected;
+    CHECK(json::parse(expectedText, expected));
+    std::string canonical = canonicalBody(batch);
+    CHECK_MSG(canonical == expected.getString("canonical"), "canonical bytes differ from the golden");
+    CHECK(static_cast<int64_t>(canonical.size()) == expected.getInt("canonicalLength"));
+    CHECK(crypto::toHex(crypto::sha256(canonical)) == expected.getString("canonicalSha256"));
+    std::string key;
+    CHECK(crypto::fromHex(expected["hmac"].getString("keyHex"), key));
+    CHECK(crypto::toHex(crypto::hmacSha256(key, canonical)) == expected["hmac"].getString("signatureHex"));
+    std::string normalized;
+    for (char c : text) if (c != '\r') normalized.push_back(c);
+    CHECK_MSG(serializeBatch(batch, true) + "\n" == normalized, "pretty layout differs from the v0.15.0 timing_result fixture");
+
+    // the four results, by input
+    std::vector<size_t> at;
+    for (size_t i = 0; i < batch.events.size(); ++i) {
+        if (batch.events[i].kind() == EventKind::TimingResult) at.push_back(i);
+    }
+    CHECK(at.size() == 4);
+    if (at.size() != 4) return;
+    auto const& P = std::get<TimingResultPayload>(batch.events[at[0]].payload);
+    auto const& R = std::get<TimingResultPayload>(batch.events[at[1]].payload);
+    auto const& P2 = std::get<TimingResultPayload>(batch.events[at[2]].payload);
+    auto const& R2 = std::get<TimingResultPayload>(batch.events[at[3]].payload);
+    for (auto const* p : {&P, &R, &P2, &R2}) {
+        CHECK(p->solverVersion == "gprl-clone/7" && p->control.has_value());
+        if (p->sequence) CHECK(p->sequence->solverVersion == "gprl-clone-sa/6");
+    }
+    // control 1: the press, then the release with the phase tolerance
+    CHECK(P.control->index == 1 && P.control->role == "press" && P.control->pressSeq == std::optional<int64_t>(2) && P.control->releaseSeq == std::optional<int64_t>(5));
+    CHECK(P.control->holdMs.has_value() && !P.control->phase && P.control->followers == 1);
+    CHECK(!P.control->rejoinEarly && P.control->rejoinLate && P.control->rejoinLate->kind == "approx");
+    CHECK_NEAR(P.control->rejoinLate->afterMs, 22.0 * kTickMs, 1e-9);
+    CHECK(P.control->rejoinLate->errorY == 0.75 && P.control->rejoinLate->errorVy == 0.0625);
+    CHECK(R.control->index == 1 && R.control->role == "release" && R.control->holdMs == P.control->holdMs);
+    CHECK(R.control->phase.has_value());
+    if (R.control->phase) {
+        CHECK_NEAR(R.control->phase->earlyMs, -2.5 * kTickMs, 1e-9);
+        CHECK_NEAR(R.control->phase->lateMs, 4.5 * kTickMs, 1e-9);
+        CHECK(R.control->phase->earlyStop == "fail" && R.control->phase->lateStop == "fail" && R.control->phase->decided && R.control->phase->trials == 9);
+    }
+    CHECK(R.control->rejoinLate && R.control->rejoinLate->kind == "exact" && R.control->rejoinLate->errorY == 0.0);
+    CHECK(R.hold && R.control->holdMs && R.hold->minMs <= *R.control->holdMs && *R.control->holdMs <= R.hold->maxMs);
+    // control 2: survived without re-joining is not a pass; then a replay that left the real run
+    CHECK(P2.status == "sequence_dependent" && !P2.statusReasons.empty() && P2.statusReasons.front() == "sa_survives_no_rejoin");
+    CHECK(P2.sequence && !P2.sequence->decided && P2.sequence->window.late.stop == "undecided");
+    CHECK(P2.sequence && P2.local && P2.sequence->window.latestMs == P2.local->latestMs);   // nothing invented beyond the local edge
+    CHECK(P2.control->index == 2 && P2.control->followers == 2 && P2.control->rejoinEarly && P2.control->rejoinEarly->kind == "parallel" && !P2.control->rejoinLate);
+    CHECK(R2.status == "state_replay_failed" && !R2.stateReplayValid && !R2.local && !R2.sequence && !R2.pair && !R2.hold);
+    CHECK(R2.parity.has_value());
+    if (R2.parity) CHECK(R2.parity->tick == 560.0 && R2.parity->field == "x" && R2.parity->real == 6290.25 && R2.parity->replay == 6291.5 && R2.parity->delta == 1.25);
+    CHECK(!P.parity && !R.parity && !P2.parity);
+    // the gate mirror accepts the decided result and the status rules agree with the reasons
+    {
+        auto gate = gprl::solver::checkTimingResultPayload(P, batch.events[at[0]].t, P.subTickMs, nullptr);
+        std::string why;
+        for (auto const& r : gate.reasons) why += r + " ";
+        CHECK_MSG(gate.accepted, "gate: " + why);
+    }
+    // the writer: `control` after `solverVersion`, `parity` last; the nullable keys always written
+    {
+        std::string c = json::stringify(toJson(batch.events[at[0]]));
+        CHECK(c.find("\"solverVersion\":\"gprl-clone/7\",\"control\":{\"index\":1,\"role\":\"press\",\"pressSeq\":2,\"releaseSeq\":5,\"holdMs\":") != std::string::npos);
+        CHECK(c.find("\"phase\":null,\"followers\":1,\"rejoin\":{\"early\":null,\"late\":{\"kind\":\"approx\",\"afterMs\":") != std::string::npos);
+        std::string r2 = json::stringify(toJson(batch.events[at[3]]));
+        CHECK(r2.find("\"rejoin\":{\"early\":null,\"late\":null}},\"parity\":{\"tick\":560,\"field\":\"x\",\"real\":6290.25,\"replay\":6291.5,\"delta\":1.25}}") != std::string::npos);
+        Event own = batch.events[at[3]];
+        auto p = R2;
+        p.control.reset();
+        p.parity.reset();
+        own.payload = p;
+        std::string bare = json::stringify(toJson(own));
+        CHECK(bare.find("\"control\":") == std::string::npos && bare.find("\"parity\":") == std::string::npos);
+    }
+
+    // the malformed cases (shared/test/timing-result.test.ts bad150), each refused with a message
+    auto refused = [&](char const* what, size_t which, auto&& mutate) {
+        Batch bad = batch;
+        mutate(std::get<TimingResultPayload>(bad.events[at[which]].payload));
+        std::string e;
+        CHECK_MSG(!validateBatch(bad, &e), what);
+    };
+    refused("control.index 0", 0, [](TimingResultPayload& p) { p.control->index = 0; });
+    refused("an unknown role", 0, [](TimingResultPayload& p) { p.control->role = "hold"; });
+    refused("a role that is not the inputKind", 0, [](TimingResultPayload& p) { p.control->role = "release"; });
+    refused("releaseSeq negative", 0, [](TimingResultPayload& p) { p.control->releaseSeq = -1; });
+    refused("holdMs negative", 0, [](TimingResultPayload& p) { p.control->holdMs = -1.0; });
+    refused("a phase on a press", 0, [](TimingResultPayload& p) { p.control->phase = TimingPhasePayload{-kTickMs, kTickMs, "fail", "fail", true, 2}; });
+    refused("phase.earlyMs above 0", 1, [](TimingResultPayload& p) { p.control->phase->earlyMs = kTickMs; });
+    refused("phase.lateMs below 0", 1, [](TimingResultPayload& p) { p.control->phase->lateMs = -kTickMs; });
+    refused("an unknown phase stop", 1, [](TimingResultPayload& p) { p.control->phase->lateStop = "wall"; });
+    refused("phase.decided true with an undecided side", 1, [](TimingResultPayload& p) { p.control->phase->lateStop = "undecided"; });
+    refused("followers above 6", 0, [](TimingResultPayload& p) { p.control->followers = 7; });
+    refused("an unknown rejoin kind", 0, [](TimingResultPayload& p) { p.control->rejoinLate->kind = "survived"; });
+    refused("a negative rejoin error", 0, [](TimingResultPayload& p) { p.control->rejoinLate->errorY = -0.5; });
+    refused("a rejoin without a sequence window", 3, [](TimingResultPayload& p) { p.control->rejoinLate = TimingRejoinPayload{"exact", 10.0, 0.0, 0.0}; });
+    refused("parity on a result whose replay was valid", 0, [](TimingResultPayload& p) { p.parity = TimingParityPayload{500.0, "y", 1.0, 2.0, 1.0}; });
+    refused("an unknown parity field", 3, [](TimingResultPayload& p) { p.parity->field = "colour"; });
+    refused("a negative parity tick", 3, [](TimingResultPayload& p) { p.parity->tick = -1.0; });
+    refused("sa_survives_no_rejoin with status ok", 0, [](TimingResultPayload& p) { p.statusReasons = {"sa_survives_no_rejoin"}; });
+    refused("more than 6 follower offsets", 0, [](TimingResultPayload& p) { p.sequence->compensation->lateOffsetsMs = std::vector<double>(7, kTickMs); });
+    // the reader refuses the structural cases the typed payload cannot hold
+    auto unreadable = [&](char const* what, std::string const& from, std::string const& to) {
+        std::string t = serializeBatch(batch, false);
+        auto pos = t.find(from);
+        CHECK_MSG(pos != std::string::npos, std::string("fixture text not found: ") + what);
+        if (pos == std::string::npos) return;
+        t.replace(pos, from.size(), to);
+        Batch b;
+        std::string e;
+        CHECK_MSG(!parseBatch(t, b, &e), what);
+    };
+    unreadable("control null", "\"control\":{\"index\":1,\"role\":\"press\"", "\"control\":null,\"x1\":{\"index\":1,\"role\":\"press\"");
+    unreadable("pressSeq missing", "\"role\":\"press\",\"pressSeq\":2,", "\"role\":\"press\",");
+    unreadable("phase missing", "\"phase\":null,\"followers\":1", "\"followers\":1");
+    unreadable("rejoin.early missing", "\"rejoin\":{\"early\":null,\"late\":{\"kind\":\"approx\"", "\"rejoin\":{\"late\":{\"kind\":\"approx\"");
+    unreadable("parity null", "\"parity\":{\"tick\":560", "\"parity\":null,\"x2\":{\"tick\":560");
+
+    // accepted variants: a control without known ends, six followers at the level end, an undecided phase
+    {
+        Batch ok = batch;
+        auto& p = std::get<TimingResultPayload>(ok.events[at[0]].payload);
+        p.control = TimingControlPayload{};
+        p.control->role = "press";
+        CHECK_MSG(validateBatch(ok, &err), err);
+        Batch six = batch;
+        auto& q = std::get<TimingResultPayload>(six.events[at[0]].payload);
+        q.sequence->adaptationUsed = {"comp1", "chain_n", "comp_n"};
+        q.sequence->compensation->lateOffsetsMs = {kTickMs, 2 * kTickMs, 3 * kTickMs, 4 * kTickMs, 5 * kTickMs, 6 * kTickMs};
+        q.control->followers = 6;
+        q.control->rejoinLate = TimingRejoinPayload{"level_end", 120.0 * kTickMs, 0.0, 0.0};
+        auto& r = std::get<TimingResultPayload>(six.events[at[1]].payload);
+        r.control->phase = TimingPhasePayload{0.0, 2 * kTickMs, "neighbour", "undecided", false, 40};
+        CHECK_MSG(validateBatch(six, &err), err);
+        std::string round = serializeBatch(six, false);
+        Batch back;
+        CHECK_MSG(parseBatch(round, back, &err), err);
+        CHECK(std::get<TimingResultPayload>(back.events[at[0]].payload) == q);
+        CHECK(std::get<TimingResultPayload>(back.events[at[1]].payload) == r);
+    }
+    // revision 7 constants; the older goldens carry none of the vocabulary or blocks
+    CHECK(kTelemetryRevision == 7 && kControlsRevision == 7 && kControlsRevision > kCompensationRevision);
+    for (char const* older : {"telemetry/batch-timing-result.json", "telemetry/batch-timing-result-v071.json", "telemetry/batch-timing-result-v080.json", "telemetry/batch-timing-result-v0140.json"}) {
+        std::string t = fixture(older);
+        CHECK_MSG(t.find("\"control\"") == std::string::npos && t.find("\"parity\"") == std::string::npos && t.find("sa_survives_no_rejoin") == std::string::npos
+                  && t.find("chain_n") == std::string::npos && t.find("comp_n") == std::string::npos && t.find("gprl-clone/7") == std::string::npos, older);
+    }
+}
+
 void testCaptureFixture() {
     SECTION("capture golden (v0.5.1): gdAttemptCount, evidenceHint, activeMs / practiceMs / startPosMs");
     std::string text = fixture("telemetry/batch-capture.json");
@@ -1153,7 +1321,7 @@ void testSequenceFixture() {
 void testTimingResultFixture() {
     SECTION("timing_result golden (v0.7.0): status + local / sequence / pair / hold + cluster + counts");
     // v0.8.0: the schema is at revision 5; the kind arrived with 4, a 0.8.0 result needs 5
-    CHECK(kTelemetryRevision == 6 && kTimingResultRevision == 4 && kIsolationRevision == 5 && kCompensationRevision == 6);
+    CHECK(kTelemetryRevision == 7 && kTimingResultRevision == 4 && kIsolationRevision == 5 && kCompensationRevision == 6 && kControlsRevision == 7);
     CHECK(kEventKindCount == 12);
     CHECK(std::string(kindName(EventKind::TimingResult)) == "timing_result");
     EventKind parsed = EventKind::Input;
@@ -1820,6 +1988,7 @@ int main(int argc, char** argv) {
     testTimingResultFixture071();
     testTimingResultFixture080();
     testTimingResultFixture0140();
+    testTimingResultFixture0150();
     testDeathDetectorFixture();
     return gprl::test::finish("telemetry_roundtrip_tests");
 }

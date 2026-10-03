@@ -242,8 +242,9 @@ TimingResultBuild buildTimingResultEvent(TimingResultContext const& ctx, LocalEv
         telemetry::CompensationPayload cp;
         for (double f : sa->sequence.early.followerOffsetsFrames) cp.earlyOffsetsMs.push_back(f * kTickMs);
         for (double f : sa->sequence.late.followerOffsetsFrames) cp.lateOffsetsMs.push_back(f * kTickMs);
-        if (cp.earlyOffsetsMs.size() > 3) cp.earlyOffsetsMs.resize(3);
-        if (cp.lateOffsetsMs.size() > 3) cp.lateOffsetsMs.resize(3);
+        // revision 7: up to 6 followers (comp::kMaxFollowers)
+        if (cp.earlyOffsetsMs.size() > 6) cp.earlyOffsetsMs.resize(6);
+        if (cp.lateOffsetsMs.size() > 6) cp.lateOffsetsMs.resize(6);
         // present only when a side was set by a pass that moved followers: a window set by local
         // passes alone carries no block, so every older payload stays byte-identical
         if (!cp.earlyOffsetsMs.empty() || !cp.lateOffsetsMs.empty()) sq.compensation = cp;
@@ -275,6 +276,49 @@ TimingResultBuild buildTimingResultEvent(TimingResultContext const& ctx, LocalEv
     p.controlSimulations = std::max(0, ctx.controlSimulations);
     p.solverVersion = solverVersionFor(ctx.refined);
     p.dual = ctx.dual;   // v0.8.0: the dual pair's player-2 facts (the validators tie it to `dual_pair`)
+    // v0.15.0 (docs/SHIP_SOLVER.md §11.3, revision 7): the Ship control of a connected-control result
+    if (ctx.control && !aborted) {
+        telemetry::TimingControlPayload k;
+        k.index = std::max(1, ctx.control->index);
+        k.role = ctx.kind == InputKind::Press ? "press" : "release";
+        if (ctx.control->pressSeq >= 0) k.pressSeq = ctx.control->pressSeq;
+        if (ctx.control->releaseSeq >= 0) k.releaseSeq = ctx.control->releaseSeq;
+        if (std::isfinite(ctx.control->holdFrames) && ctx.control->holdFrames >= 0.0) k.holdMs = ctx.control->holdFrames * kTickMs;
+        if (SAResult const* ph = ctx.control->phase; ph && ph->valid && ph->sequence.present && ctx.kind == InputKind::Release) {
+            telemetry::TimingPhasePayload x;
+            x.earlyMs = std::min(0.0, ph->sequence.early.edgeFrames() * kTickMs);
+            x.lateMs = std::max(0.0, ph->sequence.late.edgeFrames() * kTickMs);
+            x.earlyStop = name(ph->sequence.early.stop);
+            x.lateStop = name(ph->sequence.late.stop);
+            x.decided = ph->decided;
+            x.trials = ph->trials;
+            k.phase = x;
+        }
+        if (p.sequence && sa) {
+            k.followers = std::clamp(sa->followersUsed, 0, 6);
+            std::pair<SAEdge const*, std::optional<telemetry::TimingRejoinPayload>*> const sides[] = {{&sa->sequence.early, &k.rejoinEarly}, {&sa->sequence.late, &k.rejoinLate}};
+            for (auto const& [e, dst] : sides) {
+                if (!rejoin::rejoined(e->rejoin)) continue;
+                telemetry::TimingRejoinPayload r;
+                r.kind = rejoin::name(e->rejoin);
+                r.afterMs = std::isfinite(e->rejoinAfterFrames) ? e->rejoinAfterFrames * kTickMs : 0.0;
+                r.errorY = std::isfinite(e->rejoinErrY) ? std::fabs(e->rejoinErrY) : 0.0;
+                r.errorVy = std::isfinite(e->rejoinErrVy) ? std::fabs(e->rejoinErrVy) : 0.0;
+                *dst = r;
+            }
+        }
+        p.control = k;
+    }
+    // v0.15.0 (docs/SHIP_SOLVER.md §11.1): where the replay first left the real run
+    if (!ctx.parity.valid && ctx.parity.first.any() && !p.stateReplayValid) {
+        telemetry::TimingParityPayload x;
+        x.tick = std::max(0.0, ctx.parity.tick);
+        x.field = parity::name(ctx.parity.first.field);
+        x.real = ctx.parity.first.real;
+        x.replay = ctx.parity.first.replay;
+        x.delta = ctx.parity.first.delta;
+        if (std::isfinite(x.real) && std::isfinite(x.replay) && std::isfinite(x.delta)) p.parity = x;
+    }
     std::string err;
     if (telemetry::validateTimingResult(p, "", &err)) {
         b.ok = true;

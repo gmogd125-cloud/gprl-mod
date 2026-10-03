@@ -110,10 +110,15 @@ void slot(Ctx& c, std::string const& path, int player) {
 constexpr char const* kEdgeStops[] = {"fail", "range", "neighbour", "history", "attempt_start", "untested", "undecided"};
 constexpr char const* kEdgeCauses[] = {"self", "downstream", "extension"};
 constexpr char const* kPlacements[] = {"tick", "cbf"};
-constexpr char const* kAdaptations[] = {"pair", "chain2", "chain3", "comp1", "comp2", "comp3"};   // schema.ts SA_ADAPTATIONS (comp*: revision 6)
+constexpr char const* kAdaptations[] = {"pair", "chain2", "chain3", "comp1", "comp2", "comp3", "chain_n", "comp_n"};   // schema.ts SA_ADAPTATIONS (comp*: revision 6; *_n: revision 7)
 constexpr char const* kHoldBases[] = {"sequence", "local"};
 constexpr char const* kEdgeProofs[] = {"local", "rejoined", "survived", "compensated"};   // schema.ts TIMING_EDGE_PROOFS (Fable D3b; compensated: revision 6)
-constexpr size_t kMaxCompensationOffsets = 3;   // schema.ts: at most maxFollowers offsets per side
+constexpr size_t kMaxCompensationOffsets = 6;   // schema.ts: at most maxFollowers offsets per side (3 until revision 6)
+// revision 7 (controls/1, docs/SHIP_SOLVER.md §11)
+constexpr char const* kRejoinKinds[] = {"exact", "approx", "parallel", "level_end"};   // schema.ts TIMING_REJOIN_KINDS
+constexpr char const* kControlRoles[] = {"press", "release"};
+constexpr char const* kParityFields[] = {"x", "y", "y_velocity", "on_ground", "gravity", "gamemode", "dashing", "on_slope", "size",
+                                         "speed", "held", "rings", "last_x", "last_y", "dual", "alive"};   // schema.ts TIMING_PARITY_FIELDS
 
 /// schema.ts TIMING_CLUSTER_ID_PATTERN ^[A-Za-z0-9_-]{1,64}:[0-9]{1,6}$
 bool timingClusterIdOk(std::string const& id) {
@@ -577,6 +582,52 @@ Value toJson(Event const& e) {
                 d.set("sameGravity", p.dual->sameGravity);
                 o.set("dual", std::move(d));
             }
+            if (p.control) {
+                // v0.15.0 optional (revision 7): written after `dual`; the nullable keys always
+                auto const& k = *p.control;
+                auto optInt = [](std::optional<int64_t> const& x) { return x ? Value(*x) : Value(nullptr); };
+                auto rejoin = [](std::optional<TimingRejoinPayload> const& r) {
+                    if (!r) return Value(nullptr);
+                    Value x = Value::object();
+                    x.set("kind", r->kind);
+                    x.set("afterMs", r->afterMs);
+                    x.set("errorY", r->errorY);
+                    x.set("errorVy", r->errorVy);
+                    return x;
+                };
+                Value c = Value::object();
+                c.set("index", k.index);
+                c.set("role", k.role);
+                c.set("pressSeq", optInt(k.pressSeq));
+                c.set("releaseSeq", optInt(k.releaseSeq));
+                c.set("holdMs", k.holdMs ? Value(*k.holdMs) : Value(nullptr));
+                if (k.phase) {
+                    Value ph = Value::object();
+                    ph.set("earlyMs", k.phase->earlyMs);
+                    ph.set("lateMs", k.phase->lateMs);
+                    ph.set("earlyStop", k.phase->earlyStop);
+                    ph.set("lateStop", k.phase->lateStop);
+                    ph.set("decided", k.phase->decided);
+                    ph.set("trials", k.phase->trials);
+                    c.set("phase", std::move(ph));
+                }
+                else c.set("phase", Value(nullptr));
+                c.set("followers", k.followers);
+                Value rj = Value::object();
+                rj.set("early", rejoin(k.rejoinEarly));
+                rj.set("late", rejoin(k.rejoinLate));
+                c.set("rejoin", std::move(rj));
+                o.set("control", std::move(c));
+            }
+            if (p.parity) {
+                Value pr = Value::object();
+                pr.set("tick", p.parity->tick);
+                pr.set("field", p.parity->field);
+                pr.set("real", p.parity->real);
+                pr.set("replay", p.parity->replay);
+                pr.set("delta", p.parity->delta);
+                o.set("parity", std::move(pr));
+            }
         }
     }, e.payload);
     return o;
@@ -863,6 +914,82 @@ bool fromJson(Value const& v, Event& e, std::string* err) {
                 if (!requiredBool(*d, "sameGravity", dual.sameGravity, err, "timing_result.dual.sameGravity")) return false;
                 p.dual = dual;
             }
+            if (auto* k = v.find("control")) {
+                // v0.15.0 optional block (revision 7): never null; every key required, the nullable
+                // ones written as null
+                if (!k->isObject()) return setErr(err, "bad timing_result.control (expected an object)");
+                TimingControlPayload c;
+                auto reqInt = [&](json::Value const& o, char const* key, int64_t& out, char const* what) {
+                    auto* f = o.find(key);
+                    if (!f || !f->isNumber() || std::floor(f->asNumber()) != f->asNumber()) return setErr(err, std::string("bad or missing ") + what + " (expected an integer)");
+                    out = f->asInt();
+                    return true;
+                };
+                auto nullableInt = [&](json::Value const& o, char const* key, std::optional<int64_t>& out, char const* what) {
+                    auto* f = o.find(key);
+                    if (!f) return setErr(err, std::string("missing ") + what + " (integer or null required)");
+                    if (f->isNull()) return true;
+                    if (!f->isNumber() || std::floor(f->asNumber()) != f->asNumber()) return setErr(err, std::string("bad ") + what + " (expected an integer or null)");
+                    out = f->asInt();
+                    return true;
+                };
+                if (!reqInt(*k, "index", c.index, "timing_result.control.index")) return false;
+                c.role = k->getString("role");
+                if (!nullableInt(*k, "pressSeq", c.pressSeq, "timing_result.control.pressSeq")) return false;
+                if (!nullableInt(*k, "releaseSeq", c.releaseSeq, "timing_result.control.releaseSeq")) return false;
+                {
+                    auto* h = k->find("holdMs");
+                    if (!h) return setErr(err, "missing timing_result.control.holdMs (number or null required)");
+                    if (!h->isNull()) {
+                        if (!h->isNumber()) return setErr(err, "bad timing_result.control.holdMs (expected a number or null)");
+                        c.holdMs = h->asNumber();
+                    }
+                }
+                {
+                    auto* ph = k->find("phase");
+                    if (!ph) return setErr(err, "missing timing_result.control.phase (object or null required)");
+                    if (!ph->isNull()) {
+                        if (!ph->isObject()) return setErr(err, "bad timing_result.control.phase (expected an object or null)");
+                        TimingPhasePayload x;
+                        x.earlyMs = ph->getNumber("earlyMs", std::nan(""));
+                        x.lateMs = ph->getNumber("lateMs", std::nan(""));
+                        x.earlyStop = ph->getString("earlyStop");
+                        x.lateStop = ph->getString("lateStop");
+                        if (!requiredBool(*ph, "decided", x.decided, err, "timing_result.control.phase.decided")) return false;
+                        if (!reqInt(*ph, "trials", x.trials, "timing_result.control.phase.trials")) return false;
+                        c.phase = x;
+                    }
+                }
+                if (!reqInt(*k, "followers", c.followers, "timing_result.control.followers")) return false;
+                {
+                    auto* rj = k->find("rejoin");
+                    if (!rj || !rj->isObject()) return setErr(err, "bad or missing timing_result.control.rejoin (expected an object)");
+                    std::pair<char const*, std::optional<TimingRejoinPayload>*> const sides[] = {{"early", &c.rejoinEarly}, {"late", &c.rejoinLate}};
+                    for (auto const& [key, dst] : sides) {
+                        auto* r = rj->find(key);
+                        if (!r) return setErr(err, std::string("missing timing_result.control.rejoin.") + key + " (object or null required)");
+                        if (r->isNull()) continue;
+                        if (!r->isObject()) return setErr(err, std::string("bad timing_result.control.rejoin.") + key + " (expected an object or null)");
+                        TimingRejoinPayload x;
+                        x.kind = r->getString("kind");
+                        x.afterMs = r->getNumber("afterMs", std::nan(""));
+                        x.errorY = r->getNumber("errorY", std::nan(""));
+                        x.errorVy = r->getNumber("errorVy", std::nan(""));
+                        *dst = x;
+                    }
+                }
+                p.control = c;
+            }
+            if (auto* pr = v.find("parity")) {
+                if (!pr->isObject()) return setErr(err, "bad timing_result.parity (expected an object)");
+                TimingParityPayload x;
+                x.tick = pr->getNumber("tick", std::nan(""));
+                x.field = pr->getString("field");
+                x.real = pr->getNumber("real", std::nan(""));
+                x.replay = pr->getNumber("replay", std::nan(""));
+                x.delta = pr->getNumber("delta", std::nan(""));
+                p.parity = x;
+            }
             e.payload = p;
             break;
         }
@@ -1010,7 +1137,7 @@ void checkTimingResult(Ctx& c, std::string const& path, TimingResultPayload cons
         str(c, sp + "/solverVersion", sq.solverVersion);
         num(c, sp + "/undecidedShifts", static_cast<double>(sq.undecidedShifts), true, 0.0);
         for (size_t i = 0; i < sq.adaptationUsed.size(); ++i) {
-            if (!inVocab(sq.adaptationUsed[i], kAdaptations)) c.fail(sp + "/adaptationUsed/" + std::to_string(i), "expected one of pair|chain2|chain3|comp1|comp2|comp3");
+            if (!inVocab(sq.adaptationUsed[i], kAdaptations)) c.fail(sp + "/adaptationUsed/" + std::to_string(i), "expected one of pair|chain2|chain3|comp1|comp2|comp3|chain_n|comp_n");
             for (size_t j = 0; j < i; ++j) {
                 if (sq.adaptationUsed[j] == sq.adaptationUsed[i]) c.fail(sp + "/adaptationUsed/" + std::to_string(i), "duplicate adaptation");
             }
@@ -1021,7 +1148,7 @@ void checkTimingResult(Ctx& c, std::string const& path, TimingResultPayload cons
                                                                                {"lateOffsetsMs", &sq.compensation->lateOffsetsMs}};
             for (auto const& [key, arr] : parts) {
                 std::string ap = sp + "/compensation/" + key;
-                if (arr->size() > kMaxCompensationOffsets) c.fail(ap, "expected at most 3 offsets");
+                if (arr->size() > kMaxCompensationOffsets) c.fail(ap, "expected at most 6 offsets");
                 for (size_t i = 0; i < arr->size(); ++i) num(c, ap + "/" + std::to_string(i), (*arr)[i]);
             }
         }
@@ -1096,6 +1223,51 @@ void checkTimingResult(Ctx& c, std::string const& path, TimingResultPayload cons
     // v0.8.0: `dual_pair` names the pair simulator; its player-2 facts travel in the `dual` block
     if (!p.dual && std::find(p.statusReasons.begin(), p.statusReasons.end(), "dual_pair") != p.statusReasons.end())
         c.fail(path + "/dual", "dual_pair needs the dual block");
+    // v0.15.0 (revision 7, docs/SHIP_SOLVER.md §11): the Ship control block
+    if (p.control) {
+        auto const& k = *p.control;
+        std::string kp = path + "/control";
+        num(c, kp + "/index", static_cast<double>(k.index), true, 1.0);
+        if (!inVocab(k.role, kControlRoles)) c.fail(kp + "/role", "expected one of press|release");
+        else if ((k.role == "press") != (p.inputKind == InputKind::Press)) c.fail(kp + "/role", "role must be the event's inputKind");
+        if (k.pressSeq) num(c, kp + "/pressSeq", static_cast<double>(*k.pressSeq), true, 0.0);
+        if (k.releaseSeq) num(c, kp + "/releaseSeq", static_cast<double>(*k.releaseSeq), true, 0.0);
+        if (k.holdMs) num(c, kp + "/holdMs", *k.holdMs, false, 0.0);
+        if (k.phase) {
+            auto const& ph = *k.phase;
+            std::string pp = kp + "/phase";
+            num(c, pp + "/earlyMs", ph.earlyMs);
+            num(c, pp + "/lateMs", ph.lateMs, false, 0.0);
+            if (std::isfinite(ph.earlyMs) && ph.earlyMs > 0.0) c.fail(pp + "/earlyMs", "expected <= 0");
+            if (!inVocab(ph.earlyStop, kEdgeStops)) c.fail(pp + "/earlyStop", "expected one of fail|range|neighbour|history|attempt_start|untested|undecided");
+            if (!inVocab(ph.lateStop, kEdgeStops)) c.fail(pp + "/lateStop", "expected one of fail|range|neighbour|history|attempt_start|untested|undecided");
+            num(c, pp + "/trials", static_cast<double>(ph.trials), true, 0.0);
+            auto open = [](std::string const& s) { return s == "undecided" || s == "untested"; };
+            if (ph.decided != (!open(ph.earlyStop) && !open(ph.lateStop))) c.fail(pp + "/decided", "decided must be true exactly when neither side is undecided / untested");
+            if (k.role != "release") c.fail(pp, "a phase tolerance belongs to a release (the control is complete there)");
+        }
+        num(c, kp + "/followers", static_cast<double>(k.followers), true, 0.0, static_cast<double>(kMaxCompensationOffsets));
+        std::pair<char const*, std::optional<TimingRejoinPayload> const*> const sides[] = {{"early", &k.rejoinEarly}, {"late", &k.rejoinLate}};
+        for (auto const& [key, r] : sides) {
+            if (!*r) continue;
+            std::string rp = kp + "/rejoin/" + key;
+            if (!inVocab((*r)->kind, kRejoinKinds)) c.fail(rp + "/kind", "expected one of exact|approx|parallel|level_end");
+            num(c, rp + "/afterMs", (*r)->afterMs);
+            num(c, rp + "/errorY", (*r)->errorY, false, 0.0);
+            num(c, rp + "/errorVy", (*r)->errorVy, false, 0.0);
+            if (!p.sequence) c.fail(rp, "a re-join describes a sequence edge: it needs the sequence window");
+        }
+    }
+    // v0.15.0 (revision 7): the first divergence of a replay that was not exact
+    if (p.parity) {
+        std::string pp = path + "/parity";
+        num(c, pp + "/tick", p.parity->tick, false, 0.0);
+        if (!inVocab(p.parity->field, kParityFields)) c.fail(pp + "/field", "expected one of the parity fields");
+        num(c, pp + "/real", p.parity->real);
+        num(c, pp + "/replay", p.parity->replay);
+        num(c, pp + "/delta", p.parity->delta);
+        if (p.stateReplayValid) c.fail(pp, "a parity divergence needs stateReplayValid false");
+    }
 }
 
 }  // namespace

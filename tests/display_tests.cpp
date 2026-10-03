@@ -53,6 +53,16 @@ void testHistoryText() {
     auto withV2 = measured(true, 16.666667, -6.25, 10.416667);
     withV2.suffix = "local 4.00 f / seq 11.00 f ok";
     CHECK(historyText(withV2) == "PRESS 16.67 ms [-6.25 +10.42] | local 4.00 f / seq 11.00 f ok");
+    {
+        // v0.15.0: a Ship input - the figure is the frozen (local) window, the suffix the compensated one
+        auto ship = measured(true, 4.166666, -2.083333, 2.083333);
+        ship.frozen = true;
+        CHECK(historyText(ship) == "PRESS frozen 4.17 ms [-2.08 +2.08]");
+        ship.suffix = "compensated 15.0 f ok";
+        CHECK(historyText(ship) == "PRESS frozen 4.17 ms [-2.08 +2.08] | compensated 15.0 f ok");
+        ship.miss = true;
+        CHECK(historyText(ship) == "PRESS miss frozen 4.17 ms [-2.08 +2.08] | compensated 15.0 f ok");
+    }
     dropped.suffix = "unresolved";
     CHECK(historyText(dropped) == "REL dropped: unknown | unresolved");
     dropped.suffix.clear();

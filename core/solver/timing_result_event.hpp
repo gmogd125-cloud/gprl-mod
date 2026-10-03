@@ -32,11 +32,23 @@
 #include "../telemetry.hpp"
 #include "cluster.hpp"
 #include "local_window.hpp"
+#include "parity.hpp"
 #include "pass_planner.hpp"
 #include "sequence_adjusted.hpp"
 #include "timing_status.hpp"
 
 namespace gprl::solver {
+
+/// v0.15.0 (docs/SHIP_SOLVER.md §11.3): the Ship CONTROL (one press + its release) a
+/// connected-control input belongs to, and - on the release, where the control is complete - the
+/// result of its PHASE search (the whole hold shifted, core/solver/compensation.hpp `rigid`).
+struct ControlFacts {
+    int index = 1;                    // 1-based control number in the attempt
+    int64_t pressSeq = -1;            // -1 = unknown (held before the attempt / an unbound input)
+    int64_t releaseSeq = -1;          // -1 = not released yet
+    double holdFrames = kNaN;         // the recorded hold (release - press), NaN = an end is unknown
+    SAResult const* phase = nullptr;  // release results: the phase search (null = not measured)
+};
 
 /// Everything about the input that is not a window.
 struct TimingResultContext {
@@ -63,6 +75,10 @@ struct TimingResultContext {
     // result measured by the dual PAIR simulator; the status rules add `dual_pair`
     // (ContextFacts::dualPair) and the validators require this block with that reason
     std::optional<telemetry::TimingResultDualPayload> dual;
+    // v0.15.0 (docs/SHIP_SOLVER.md §11): the input's Ship control (connected-control modes) and the
+    // first divergence of a replay that left the real run (parity.valid == false)
+    std::optional<ControlFacts> control;
+    parity::Record parity;
 };
 
 /// The local window and what the status rules need to know about it.

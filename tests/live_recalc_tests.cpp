@@ -64,7 +64,7 @@ void testConstants() {
 }
 
 void testGate() {
-    SECTION("due: only a Remote session on a counting level with sent windows, live updates on");
+    SECTION("due: only a Remote session with sent windows, live updates on; on any level");
     LiveRecalcSchedule s;
     int64_t t0 = 1'000'000;
     CHECK(!s.due(t0 + 3600 * S, open()));   // no session started
@@ -85,7 +85,10 @@ void testGate() {
     CHECK(!s.due(t0 + 45 * S, g));          // Unsent / Local session
     g = open();
     g.levelCounts = false;
-    CHECK(!s.due(t0 + 45 * S, g));          // not a rated demon: nothing would change
+    // Not on the levels list: still due. Every level feeds the calibration (docs/RATING.md §11);
+    // while this was a condition the owner's calibration never moved during a session on an
+    // unlisted level (report 2026-10-03).
+    CHECK(s.due(t0 + 45 * S, g));
     g = open();
     g.sessionOpen = false;
     CHECK(!s.due(t0 + 45 * S, g));

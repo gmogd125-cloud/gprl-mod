@@ -118,6 +118,10 @@ $suites = @(
     'sim_job_tests',
     'compensation_tests',
     'ship_pack_tests',
+    'rejoin_tests',
+    'parity_tests',
+    'ship_control_tests',
+    'ship_cases_tests',
     'updater_tests'
 )
 if ($Only) {

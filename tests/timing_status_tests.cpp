@@ -37,7 +37,7 @@ SAFacts decidedSA() {
 
 void testVocabulary() {
     SECTION("vocabulary: 7 statuses, 54 reasons, names round-trip, groups as schema.ts TIMING_STATUS_REASON_GROUPS");
-    CHECK(kTimingStatusCount == 7 && kReasonCount == 54);
+    CHECK(kTimingStatusCount == 7 && kReasonCount == 55);
     // v0.8.0: the new status is APPENDED (the older statuses keep their indexes: engine counters)
     CHECK(static_cast<int>(TimingStatus::NoEffect) == 5 && static_cast<int>(TimingStatus::LiveMutationDetected) == 6);
     CHECK(std::string(name(TimingStatus::LiveMutationDetected)) == "live_mutation_detected");
@@ -172,7 +172,7 @@ void testStatusOfEachReason() {
     }
     // sequence_dependent: a downstream / adaptable edge whose SA side is not decided, with the SA's reason
     for (Reason why : {Reason::SaUndecided, Reason::SaNotMeasuredBudget, Reason::SaExpired, Reason::SaNoNegativeControl, Reason::SaControlMismatch,
-                       Reason::SaNegativeNotReproduced, Reason::SaInvalidTrials, Reason::SaCutByRestart, Reason::SaDeathInSpan}) {
+                       Reason::SaNegativeNotReproduced, Reason::SaInvalidTrials, Reason::SaCutByRestart, Reason::SaDeathInSpan, Reason::SaSurvivesNoRejoin}) {
         auto l = okLocal();
         l.downstream[0] = true;
         SAFacts sa;

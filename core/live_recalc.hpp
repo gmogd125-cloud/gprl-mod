@@ -4,9 +4,10 @@
 // docs/contracts/calibration.md "Live updates").
 //
 // The server used to recalculate a player only at the session end, so the website and the HUD sat
-// at the previous values for a whole session. While a Remote session is open on a level that
-// counts and at least one timing_window / timing_result event has been SENT (accepted by the
-// server) since the last live recalculation, the telemetry worker calls POST /v1/me/recalc every
+// at the previous values for a whole session. While a Remote session is open (on any level: every
+// level feeds the calibration since 2026-10-01, the levels list is not a condition) and at least
+// one timing_window / timing_result event has been SENT (accepted by the server) since the last
+// live recalculation, the telemetry worker calls POST /v1/me/recalc every
 // kLiveRecalcIntervalSeconds (45 s) of wall clock and stores the answer exactly like
 // GET /v1/me/calibration (src/Telemetry.cpp, Command::Kind::LiveRecalc). The server allows one
 // recalculation per player per 30 s (api/src/processing/config.ts liveRecalc.cooldownSeconds) and
@@ -49,7 +50,7 @@ struct LiveRecalcGate {
     bool enabled = true;       // setting `live-recalc` (and the mod enabled, not local-only)
     bool sessionOpen = false;  // a level session is open
     bool remote = false;       // ... in SessionMode::Remote (connected, server session)
-    bool levelCounts = false;  // ... and the server said the level counts (V1CreateSessionResponse.levelCounts)
+    bool levelCounts = false;  // the level is on the levels list (V1CreateSessionResponse.levelCounts); not a condition of `due`
 };
 
 /// The interval / back-off state machine. Times are milliseconds of one monotonic clock (the

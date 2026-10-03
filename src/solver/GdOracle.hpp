@@ -100,6 +100,8 @@ bool claimDestroy(PlayLayer* pl, PlayerObject* player, GameObject* object);
 void onRealDestroy(PlayLayer* pl, PlayerObject* player, GameObject* object, bool wasDead, bool isDead);
 void onRealPortal(PlayerObject* p, int objectId);
 void onLevelComplete(PlayLayer* pl);
+/// v0.15.0: PlayLayer::playEndAnimationToPos for the real player - the run's last physical step.
+void onLevelEndAnimation(PlayLayer* pl);
 void frameEnd(PlayLayer* pl, float dt);
 
 // ---- clone identity for the side-effect guards (CloneHooks.cpp) ----
@@ -148,6 +150,8 @@ struct LastWindow {
     // v0.7.0: the input's timing_result, once it arrives: "local 4.00 f / seq 10.75 f ok"
     int jobId = 0;
     std::string v2;
+    // v0.15.0: a Ship input - the figure above is the LOCAL (frozen) window, `v2` the compensated one
+    bool frozen = false;
 };
 
 // ---- display ----

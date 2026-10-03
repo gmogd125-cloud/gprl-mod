@@ -64,7 +64,7 @@ void testFramePerfect() {
     CHECK(r.payload.boundedEarly && r.payload.boundedLate);
     CHECK(r.payload.resolutionMs <= r.widthMs);
     CHECK_NEAR(r.payload.resolutionMs, kTickMs, 1e-9);
-    CHECK(r.payload.solverVersion == "gprl-clone/6");
+    CHECK(r.payload.solverVersion == "gprl-clone/7");
     CHECK(r.payload.scope == "local");
     CHECK(r.payload.inputSeq == 12);
     CHECK(r.payload.inputKind == InputKind::Press);
@@ -172,13 +172,13 @@ void testSolverVersionAndMiss() {
     ctx.refined = true;
     auto r = buildWindowEvent(w, ctx, sampleFingerprint());
     CHECK_MSG(r.ok, r.error);
-    CHECK(r.payload.solverVersion == "gprl-clone/6-cbf");
+    CHECK(r.payload.solverVersion == "gprl-clone/7-cbf");
     CHECK(!r.hit);
     CHECK(r.payload.actualMs > r.payload.latestMs);
     CHECK_NEAR(r.payload.earliestMs, 3000.0 - 4.5 * kTickMs, 1e-9);
     CHECK_NEAR(r.payload.latestMs, 3000.0 - 1.5 * kTickMs, 1e-9);
     CHECK(checkWindowPayload(r.payload, 3.0).accepted);
-    CHECK(std::string(solverVersionFor(false)) == "gprl-clone/6");
+    CHECK(std::string(solverVersionFor(false)) == "gprl-clone/7");
 }
 
 void testNeverEmitsBadValues() {
@@ -355,7 +355,7 @@ void testBatchWithWindowAfterAttemptEnd() {
     std::string c2 = canonicalBody(b2);
     CHECK(c1 == c2);
     CHECK(c1.find("\"kind\":\"timing_window\"") != std::string::npos);
-    CHECK(c1.find("\"solverVersion\":\"gprl-clone/6\"") != std::string::npos);
+    CHECK(c1.find("\"solverVersion\":\"gprl-clone/7\"") != std::string::npos);
     CHECK(c1.find("holdMinMs") == std::string::npos);   // absent for a press
     CHECK(crypto::toHex(crypto::sha256(c1)) == crypto::toHex(crypto::sha256(c2)));
 }

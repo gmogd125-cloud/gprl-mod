@@ -185,6 +185,37 @@ bool samePhysics(PlayerObject* a, PlayerObject* b) {
     return ra == rb;
 }
 
+/// v0.15.0 (core/solver/parity.hpp): the physical state of a player as plain values. The held
+/// buttons are a map in the game: `held` stays 0 here and the two-object helpers below raise it on
+/// the replayed side when the maps differ.
+gprl::solver::parity::State parityState(PlayerObject* p) {
+    gprl::solver::parity::State s;
+    auto pos = p->getPosition();
+    s.x = pos.x;
+    s.y = pos.y;
+    s.vy = p->m_yVelocity;
+    s.onGround = p->m_isOnGround;
+    s.upsideDown = p->m_isUpsideDown;
+    s.gamemode = static_cast<int>(modeChar(p));
+    s.dashing = p->m_isDashing;
+    s.onSlope = p->m_isOnSlope;
+    s.size = p->m_vehicleSize;
+    s.speed = p->m_playerSpeed;
+    s.rings = p->m_touchingRings ? static_cast<int>(p->m_touchingRings->count()) : 0;
+    s.lastX = p->m_lastPosition.x;
+    s.lastY = p->m_lastPosition.y;
+    return s;
+}
+
+/// The first field in which the replayed copy differs from the real player (parity::compare with
+/// the engine's own tolerances: statesMatch).
+gprl::solver::parity::Divergence parityDiff(PlayerObject* real, PlayerObject* replay) {
+    auto r = parityState(real);
+    auto c = parityState(replay);
+    if (real->m_holdingButtons != replay->m_holdingButtons) c.held = r.held + 1;
+    return gprl::solver::parity::compare(r, c);
+}
+
 double nowMs() {
     using namespace std::chrono;
     return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
@@ -645,6 +676,7 @@ void CloneEngine::teardown() {
     compAbortAll(solver::status::Reason::SaCutByRestart);
     saAbortAll(solver::status::Reason::SaCutByRestart);
     flushResults(solver::status::Reason::CutByRestart, solver::status::Reason::SaCutByRestart);
+    cardsFlush();
     m_clusters.reset();
     m_seqLocals.clear();
     m_seqSeen.clear();
@@ -696,6 +728,7 @@ void CloneEngine::stopForVisit(std::string const& why) {
     compAbortAll(solver::status::Reason::SaCutByRestart);
     saAbortAll(solver::status::Reason::SaCutByRestart);
     flushResults(solver::status::Reason::CutByRestart, solver::status::Reason::SaCutByRestart);
+    cardsFlush();
     m_clusters.reset();
     m_seqLocals.clear();
     m_seqSeen.clear();
@@ -753,6 +786,7 @@ void CloneEngine::forgetLayer(PlayLayer* pl) {
     m_saPlaces.clear();
     m_saCands.clear();
     m_saRecent.clear();
+    cardsFlush();
     m_clusters.reset();
     m_pl = nullptr;
     m_sim = nullptr;
@@ -811,6 +845,7 @@ void CloneEngine::reset() {
     m_portalModelAttempt = 0;
     m_guard.resetAttempt();   // v0.8.2: the breaker is per attempt (an escalated check mode stays)
     m_isoAbortPending = false;
+    cardsFlush();
     m_clusters.reset();
     m_portalMarks.clear();
     m_shadowMarks.clear();
@@ -825,6 +860,9 @@ void CloneEngine::reset() {
     m_seqJobsThisAttempt = 0;
     m_seqTriplesThisAttempt = 0;
     m_seqClosed = false;
+    m_endPending = false;
+    m_levelEnded = false;
+    m_endStep = 0;
     for (auto& c : m_clones) freeClone(c);
     m_jobs.clear();
     m_log.clear();
@@ -1093,6 +1131,18 @@ void CloneEngine::stepBegin(float dt, bool halfTick) {
     }
 
     dropUnbound();
+    // v0.15.0: the level's end animation started (noteLevelEnd): the real run ended at m_endStep.
+    // Everything still open is finalised there - here, at a step boundary, never inside the game's
+    // own collision processing - and nothing is compared or measured until the restart (the end
+    // animation moves the player, not physics: v0.14.x read that second as 240 replay mismatches
+    // and dropped the last inputs of every completed level)
+    if (m_endPending && !m_levelEnded) finishAtLevelEnd(m_endStep);
+    if (m_levelEnded) {
+        double spentE = nowMs() - t0;
+        m_simMs += spentE;
+        m_simFrameMs += spentE;
+        return;
+    }
     // v0.8.0 isolation (docs/LIVE_ISOLATION_DESIGN.md §2.8, O6): GJBaseGameLayer::checkCollisions
     // reads the REAL player 1 inline and removes a practice checkpoint when it is dead with a
     // pending checkpoint timeout; the first checkCollisions of a death pause must be the real
@@ -1204,7 +1254,7 @@ int CloneEngine::input(bool down, PlayerStateSnapshot pre, bool ceilingTouch, do
     // too): a press mashed during the death pause would otherwise be replayed into the clones that
     // finish a miss with synthetic ticks, and would set a late limit on every open job.
     if (m_platformer) return skip("platformer level", m_counters.skippedOther);
-    if (!m_pl->m_started || m_pl->m_hasCompletedLevel) return skip("level not running", m_counters.skippedDead);
+    if (!m_pl->m_started || m_pl->m_hasCompletedLevel || m_levelEnded || m_endPending) return skip("level not running", m_counters.skippedDead);
     if (p1->m_isDead || m_realDead) return skip("player dead", m_counters.skippedDead);
 
     if (place.betweenSteps && !m_snapAhead) {
@@ -1863,6 +1913,7 @@ void CloneEngine::advance(int target, bool compareControl) {
                 mirrorNextStepSpeed(*control);   // a speed change queued for the step that just began is not a mismatch
                 if (!statesMatch(control->obj, p1, why)) {
                     job.mismatch = fmt::format("step {}: {} | real {} | control {}", target, why, stateStr(p1), stateStr(control->obj));
+                    job.parity.note(control->frameDone, parityDiff(p1, control->obj));
                 }
             }
         }
@@ -1882,6 +1933,7 @@ void CloneEngine::advance(int target, bool compareControl) {
                 job.extension = job.extension || m_realDead;
             }
             else {
+                job.parity.note(control->deathFrame, {solver::parity::Field::Alive, 1.0, 0.0, -1.0});
                 job.mismatch = fmt::format("step {}: the control died on #{} at x={:.1f} (frame {:.1f}; killer x {:.0f}) but the real player did not{}", control->deathStep,
                     control->deathObjId, control->deathX, control->deathFrame, control->deathObjX,
                     m_deathMarks.empty() ? std::string() : fmt::format(" (last real death: #{} x={:.1f} frame {:.1f})", m_deathMarks.back().obj, m_deathMarks.back().x,
@@ -1889,6 +1941,7 @@ void CloneEngine::advance(int target, bool compareControl) {
             }
         }
         if (m_realDead && control->state != CloneStatus::Dead && control->stepDone >= m_realDeathStep && job.mismatch.empty()) {
+            job.parity.note(m_realDeathFrame, {solver::parity::Field::Alive, 0.0, 1.0, 1.0});
             job.mismatch = fmt::format("step {}: the real player died on #{} at frame {:.1f} but the control survived ({})", m_realDeathStep, m_realDeathObj,
                 m_realDeathFrame, stateStr(control->obj));
         }
@@ -2276,16 +2329,39 @@ void CloneEngine::extensionSteps() {
     if (!m_pendingMisses.empty()) settleMisses(false);
 }
 
+void CloneEngine::noteLevelEnd() {
+    if (!m_pl || m_offForVisit || m_levelEnded || m_endPending || m_step < 1) return;
+    m_endPending = true;
+    m_endStep = m_step;
+    slog(1, fmt::format("GPRL solver: level end at step {} (frame {:.1f}) - the run ends here; {} local job(s), {} compensation job(s) are finalised at the next step", m_step, m_frame,
+                        m_jobs.size(), m_compJobs.size()));
+}
+
 void CloneEngine::onLevelComplete() {
     if (!m_pl || m_offForVisit) return;
-    // After the finish line the real player is moved by the end animation, not by physics: a
-    // delayed replay could not be compared with it. Nothing is queued or run until the restart.
+    // the usual path finalised everything when the end animation started (noteLevelEnd); a level
+    // that completes without one (or before the next step came) is finalised here
+    if (!m_levelEnded) finishAtLevelEnd(m_endPending ? m_endStep : m_step);
+}
+
+namespace {
+/// Clone steps the level-end finalisation may spend in one go (the run is over: no frame budget).
+constexpr int kLevelEndSteps = 20000;
+}
+
+void CloneEngine::finishAtLevelEnd(int target) {
+    if (m_levelEnded) return;
+    m_levelEnded = true;
+    m_endPending = false;
+    // After the end line the real player is moved by the end animation, not by physics: nothing
+    // can be compared with it. Every copy still alive at the run's last step, with its input
+    // applied, COMPLETED THE LEVEL: a pass. Nothing is queued or run until the restart.
     abortSequences("level_end");
     m_seqClosed = true;
     if (m_jobs.empty()) {
         settleMisses(true);   // v0.7.1 (Fable D6)
-        compAbortAll(solver::status::Reason::SaCutByRestart);
-    saAbortAll(solver::status::Reason::SaCutByRestart);
+        compLevelEnd(target);
+        saAbortAll(solver::status::Reason::SaCutByRestart);
         drainResults();
         return;
     }
@@ -2298,7 +2374,23 @@ void CloneEngine::onLevelComplete() {
     if (!m_guard.breached()) {
         double isoT0 = 0.0;
         bool const iso = isoBegin(m_isoBefore, isoT0);
-        advance(m_step, false);
+        // every running copy is brought up to the run's last step: the per-frame budget does not
+        // apply (the run is over), the catch-up budget per call does, so the call is repeated
+        int const savedBudget = m_stepBudget;
+        m_stepBudget = std::max(m_stepBudget, m_cloneStepsThisFrame + kLevelEndSteps);
+        for (int pass = 0; pass < 256; ++pass) {
+            advance(target, false);
+            bool behind = false;
+            for (auto const& j : m_jobs) {
+                if (!j.spawned || !j.dropReason.empty()) continue;
+                for (int idx : j.clones) {
+                    auto const& c = m_clones[idx];
+                    if (c.state == CloneStatus::Running && c.stepDone < target) behind = true;
+                }
+            }
+            if (!behind || m_cloneStepsThisFrame >= m_stepBudget) break;
+        }
+        m_stepBudget = savedBudget;
         if (iso) isoEnd(m_isoBefore, isoT0, "level_end", nullptr);
         isoFinishBreach();
     }
@@ -2308,7 +2400,9 @@ void CloneEngine::onLevelComplete() {
         for (int idx : j.clones) {
             auto& c = m_clones[idx];
             if (c.state == CloneStatus::Running) {
-                if (!c.inputPending) { c.state = CloneStatus::Alive; applied = true; }
+                // alive at the run's last step with its input applied: it completed the level. A copy
+                // that could not be brought that far, or whose input lies beyond the end, was not tested
+                if (!c.inputPending && c.stepDone >= target) { c.state = CloneStatus::Alive; applied = true; }
                 else c.state = CloneStatus::Cancelled;
             }
             else if (c.state != CloneStatus::Idle) applied = true;
@@ -2326,8 +2420,9 @@ void CloneEngine::onLevelComplete() {
     }
     m_jobs.clear();
     settleMisses(true);   // v0.7.1 (Fable D6)
-    // v0.7.0: no delayed replay can follow the end animation - SA candidates end undecided
-    compAbortAll(solver::status::Reason::SaCutByRestart);
+    // v0.7.0: no delayed replay can follow the end animation - SA candidates end undecided;
+    // v0.15.0: the lockstep compensation trials alive at the end are passes (compLevelEnd)
+    compLevelEnd(target);
     saAbortAll(solver::status::Reason::SaCutByRestart);
     drainResults();
 }
@@ -2627,7 +2722,7 @@ int CloneEngine::simStepPair(Clone& c1, Clone& c2, int k) {
 void CloneEngine::pairShadowStep(int k, bool compare) {
     auto p1 = m_pl->m_player1;
     auto p2 = m_pl->m_player2;
-    if (!p1 || !p2 || k < 1 || !m_pl->m_started || m_platformer || m_pl->m_hasCompletedLevel) return;
+    if (!p1 || !p2 || k < 1 || !m_pl->m_started || m_platformer || m_pl->m_hasCompletedLevel || m_levelEnded || m_endPending) return;
     // two-player levels: player 2's own inputs are not logged, the pair cannot be replayed
     if (m_pl->m_levelSettings && m_pl->m_levelSettings->m_twoPlayerMode) return;
     if (!m_shadow2.obj) {
@@ -2703,8 +2798,10 @@ void CloneEngine::shadowStep(int k, bool compare) {
     auto& c = m_shadow;
     if (!c.obj || !p1 || k < 1 || !m_pl->m_started || m_platformer) return;
     // v0.7.0 (RC-minor 3): after the finish line the end animation moves the player, not physics:
-    // v0.6.2 logged 240 fake mismatches per completion and dropped the last inputs `mismatch`
-    if (m_pl->m_hasCompletedLevel) return;
+    // v0.6.2 logged 240 fake mismatches per completion and dropped the last inputs `mismatch`.
+    // v0.15.0: m_hasCompletedLevel is only set when that animation is OVER (a second later): the
+    // run ends when it starts (noteLevelEnd)
+    if (m_pl->m_hasCompletedLevel || m_levelEnded || m_endPending) return;
     auto& hk = m_hist[ring(k)];
     if (hk.step != k) { shadowResync(k); return; }
     if (hk.frames <= 0.0) {
@@ -2913,6 +3010,43 @@ bool samePhysicsAsSnapshot(PlayerObject* a, PlayerState const& s) {
     if (a->m_holdingButtons != s.f.m_holdingButtons) return false;
     int ra = a->m_touchingRings ? static_cast<int>(a->m_touchingRings->count()) : 0;
     return ra == static_cast<int>(s.rings.size());
+}
+
+/// v0.15.0 (core/solver/rejoin.hpp): the discrete part of samePhysicsAsSnapshot - gamemode,
+/// gravity, size, speed, held buttons, the ground / slope / dash flags and the touched rings. A
+/// trial inside the re-join tolerance must agree on all of them with the recorded run.
+bool sameDiscreteAsSnapshot(PlayerObject* a, PlayerState const& s) {
+    if (a->m_isOnGround != s.f.m_isOnGround || a->m_isUpsideDown != s.f.m_isUpsideDown) return false;
+    if (a->m_isShip != s.f.m_isShip || a->m_isBall != s.f.m_isBall || a->m_isBird != s.f.m_isBird || a->m_isDart != s.f.m_isDart
+        || a->m_isRobot != s.f.m_isRobot || a->m_isSpider != s.f.m_isSpider || a->m_isSwing != s.f.m_isSwing) return false;
+    if (a->m_isDashing != s.f.m_isDashing || a->m_isOnSlope != s.f.m_isOnSlope) return false;
+    if (a->m_vehicleSize != s.f.m_vehicleSize || a->m_playerSpeed != s.f.m_playerSpeed) return false;
+    if (a->m_holdingButtons != s.f.m_holdingButtons) return false;
+    int ra = a->m_touchingRings ? static_cast<int>(a->m_touchingRings->count()) : 0;
+    return ra == static_cast<int>(s.rings.size());
+}
+
+/// The first field in which a replayed copy differs from the RECORDED state (matchesSnapshot's
+/// comparison as a parity::Divergence).
+gprl::solver::parity::Divergence parityDiffSnapshot(PlayerObject* replay, PlayerState const& s) {
+    gprl::solver::parity::State r;
+    r.x = s.pos.x;
+    r.y = s.pos.y;
+    r.vy = s.f.m_yVelocity;
+    r.onGround = s.f.m_isOnGround;
+    r.upsideDown = s.f.m_isUpsideDown;
+    r.gamemode = s.f.m_isShip ? 'S' : s.f.m_isBall ? 'B' : s.f.m_isBird ? 'U' : s.f.m_isDart ? 'W' : s.f.m_isRobot ? 'R' : s.f.m_isSpider ? 'P' : s.f.m_isSwing ? 'G' : 'C';
+    r.dashing = s.f.m_isDashing;
+    r.onSlope = s.f.m_isOnSlope;
+    r.size = s.f.m_vehicleSize;
+    r.speed = s.f.m_playerSpeed;
+    r.rings = static_cast<int>(s.rings.size());
+    r.lastX = s.lastPosition.x;
+    r.lastY = s.lastPosition.y;
+    auto c = parityState(replay);
+    c.gamemode = replay->m_isShip ? 'S' : replay->m_isBall ? 'B' : replay->m_isBird ? 'U' : replay->m_isDart ? 'W' : replay->m_isRobot ? 'R' : replay->m_isSpider ? 'P' : replay->m_isSwing ? 'G' : 'C';
+    if (replay->m_holdingButtons != s.f.m_holdingButtons) c.held = r.held + 1;
+    return gprl::solver::parity::compare(r, c);
 }
 
 // statesMatch against the recorded state, same tolerances: the control's exactness proof.
@@ -3864,6 +3998,7 @@ void CloneEngine::resultOpen(Job const& job) {
     e.halfTick = job.halfTick;
     e.horizonFrame = job.horizonFrame;
     e.replayBroken = m_replayBroken;
+    e.connected = job.connected;
     if (!job.down && !std::isnan(job.pressFrame)) {
         // the same press time the timing_window's hold fields use (finalize: actualMs - hold)
         e.pressMs = solver::units::actualMs(job.eventT, job.engineSubTickMs) - solver::timeline::framesToMs(job.t - job.pressFrame);
@@ -3900,6 +4035,7 @@ void CloneEngine::resultDrop(Job const& job, std::string const& reason) {
     else if (reason == "live_mutation") r = Reason::LiveMutationDetected;   // v0.8.2 (docs/LIVE_ISOLATION_DESIGN.md §3.3)
     e->ended.push_back(r);
     if (solver::status::group(r) == solver::status::TimingStatus::StateReplayFailed || r == Reason::LiveMutationDetected) e->stateReplayValid = false;
+    if (!job.parity.valid) e->parity = job.parity;   // v0.15.0: where the control left the real run
     e->controlSims = job.controlSims;
     e->horizonFrame = job.horizonFrame;
     e->outcomes = job.planner.outcomes();
@@ -3948,6 +4084,7 @@ void CloneEngine::resultLocal(Job& job, JobResult const& r) {
         else if (w.find("control") != std::string::npos || !job.mismatch.empty()) why = Reason::ControlMismatch;
         e->ended.push_back(why);
         if (solver::status::group(why) == solver::status::TimingStatus::StateReplayFailed) e->stateReplayValid = false;
+        if (!job.parity.valid) e->parity = job.parity;   // v0.15.0: where the control left the real run
         m_ledger.close(job.id);
         drainResults();
         return;
@@ -4117,6 +4254,31 @@ void CloneEngine::emitResult(int jobId, ResultEntry& e) {
     ctx.cluster = m_clusters.ref(e.attemptId, idx);
     ctx.controlSimulations = e.controlSims + e.saControls;
     ctx.boundarySimulations = e.localTrials + e.saTrials;
+    // v0.15.0 (docs/SHIP_SOLVER.md §11.3): the Ship control this input belongs to (the press and
+    // its release paired over the attempt's input log) and, on the release, its phase search
+    if (e.connected && idx >= 1 && static_cast<size_t>(idx) <= m_log.size()) {
+        std::vector<solver::control::LoggedInput> log;
+        log.reserve(m_log.size());
+        for (size_t i = 0; i < m_log.size(); ++i) {
+            auto const& le = m_log[i];
+            log.push_back({le.id, le.t, le.down, i > 0 && forcedBreakBetween(m_log[i - 1].t, le.t)});
+        }
+        auto const c = solver::control::controlOf(log, idx - 1);
+        if (c.index > 0) {
+            solver::ControlFacts cf;
+            cf.index = c.index;
+            cf.pressSeq = c.press >= 0 ? m_log[static_cast<size_t>(c.press)].seq : -1;
+            cf.releaseSeq = c.release >= 0 ? m_log[static_cast<size_t>(c.release)].seq : -1;
+            cf.holdFrames = c.holdFrames(log);
+            cf.phase = e.phaseRan ? &e.phase : nullptr;
+            ctx.control = cf;
+        }
+    }
+    ctx.parity = e.parity;
+    if (!e.parity.valid) {
+        slog(1, fmt::format("GPRL parity: input #{} (job {}): the replay left the real run at tick {:.1f}: {} real {:.4f} replay {:.4f} delta {:+.4f}", idx, jobId, e.parity.tick,
+                            solver::parity::name(e.parity.first.field), e.parity.first.real, e.parity.first.replay, e.parity.first.delta));
+    }
     TimingResultOut out;
     out.jobId = jobId;
     out.attemptId = e.attemptId;
@@ -4129,6 +4291,8 @@ void CloneEngine::emitResult(int jobId, ResultEntry& e) {
     if (p.local) out.localWidthMs = p.local->latestMs - p.local->earliestMs;
     if (p.sequence) out.seqWidthMs = p.sequence->window.latestMs - p.sequence->window.earliestMs;
     out.line = resultLine(e, out.build, jobId);
+    out.connected = e.connected;
+    cardNote(out);
     ++m_counters.results;
     ++m_attempt.results;
     ++m_counters.statusCount[static_cast<int>(out.build.status.status)];
@@ -4149,6 +4313,39 @@ void CloneEngine::emitResult(int jobId, ResultEntry& e) {
     }
 }
 
+// v0.15.0 (docs/SHIP_SOLVER.md §11.7): a control's card is complete when both its press and its
+// release reported (either order: the press's compensation search can end after the release's);
+// a control whose press never reports (held before the attempt, an unbound input) is printed with
+// what exists when the attempt ends (cardsFlush).
+void CloneEngine::cardNote(TimingResultOut& out) {
+    auto const& p = out.build.payload;
+    if (!p.control) return;
+    int const index = static_cast<int>(p.control->index);
+    auto& slot = m_controlSlots[index];
+    if (p.inputKind == InputKind::Press) slot.press = p;
+    else slot.release = p;
+    if (slot.press && slot.release) {
+        auto const card = solver::control::makeCard(&*slot.press, *slot.release);
+        out.card = solver::control::cardLines(card);
+        out.cardFields[0] = solver::control::fieldsLine(card, false);
+        out.cardFields[1] = solver::control::fieldsLine(card, true);
+        m_controlSlots.erase(index);
+        return;
+    }
+    while (m_controlSlots.size() > kMaxControlSlots) m_controlSlots.erase(m_controlSlots.begin());
+}
+
+void CloneEngine::cardsFlush() {
+    for (auto const& [index, slot] : m_controlSlots) {
+        (void)index;
+        if (!slot.release) continue;   // a press alone is no control yet
+        auto const card = solver::control::makeCard(slot.press ? &*slot.press : nullptr, *slot.release);
+        for (auto const& line : solver::control::cardLines(card)) slog(1, "GPRL control: " + line);
+        slog(2, "GPRL control fields: #" + std::to_string(card.index) + " release: " + solver::control::fieldsLine(card, true));
+    }
+    m_controlSlots.clear();
+}
+
 std::string CloneEngine::resultLine(ResultEntry const& e, solver::TimingResultBuild const& b, int jobId) const {
     auto const& p = b.payload;
     std::string local = "local -";
@@ -4167,6 +4364,19 @@ std::string CloneEngine::resultLine(ResultEntry const& e, solver::TimingResultBu
     }
     std::string pair = p.pair ? "pair " + windowText(*p.pair, p.actualMs) : std::string("pair -");
     std::string hold = p.hold ? fmt::format("hold [{:.2f},{:.2f}] ms {}", p.hold->minMs, p.hold->maxMs, p.hold->basis) : std::string("hold -");
+    // v0.15.0: the control (press + release), its phase tolerance and how the compensated edges re-joined
+    if (p.control) {
+        auto const& k = *p.control;
+        std::string c = fmt::format(" | control #{} {}", k.index, k.role);
+        if (k.holdMs) c += fmt::format(" hold {:.2f} f", *k.holdMs / kTickMs);
+        if (k.phase) c += fmt::format(" phase [{:+.2f},{:+.2f}] f {}", k.phase->earlyMs / kTickMs, k.phase->lateMs / kTickMs, k.phase->decided ? "decided" : "undecided");
+        auto rj = [](std::optional<telemetry::TimingRejoinPayload> const& r) {
+            return r ? fmt::format("{}(dy {:.2f} dvy {:.3f})", r->kind, r->errorY, r->errorVy) : std::string("-");
+        };
+        if (k.rejoinEarly || k.rejoinLate) c += fmt::format(" rejoin {}/{}", rj(k.rejoinEarly), rj(k.rejoinLate));
+        if (k.followers > 0) c += fmt::format(" followers {}", k.followers);
+        hold += c;
+    }
     std::string reasons;
     for (auto const& r : p.statusReasons) reasons += (reasons.empty() ? "" : ", ") + r;
     return fmt::format("input #{} {} (seq {}, job {}) t={:.4f} tick={} x={:.1f} pct={:.3f}{}: {} | {} | {} | {} | status {} ({}) | sims {} (+{} controls) | cluster {} #{} prev {} next {}{}",
@@ -4623,15 +4833,17 @@ solver::comp::CompConfig CloneEngine::compConfigFor() const {
     c.maxShiftTicks = m_cfg.maxShiftTicks;
     // the follower horizon stays 0.5 s whatever the local look-ahead is (the settle maximum is 8 s)
     c.horizonFrames = 0.5 * kTicksPerSecond;
-    double look = 0.5 * kTicksPerSecond + static_cast<double>(m_cfg.maxShiftTicks);
-    if (m_cfg.settle.enabled) look = std::max(look, m_cfg.settle.flySeconds * kTicksPerSecond + 8.0);
-    c.lookAheadFrames = look;
+    // v0.15.0 (core/solver/rejoin.hpp): a trial that has not re-joined is decided (parallel / no
+    // re-join) one settle length after its last moved input - the look-ahead of v0.14.6's settled
+    // pass; a re-join ends it earlier
+    c.rejoin.parallelFrames = m_cfg.settle.enabled ? m_cfg.settle.flySeconds * kTicksPerSecond : 0.5 * kTicksPerSecond;
+    c.lookAheadFrames = c.rejoin.maxFramesAfterLastMoved() + 4.0;
     return c;
 }
 
 CompJob* CloneEngine::findComp(int jobId) {
     for (auto& j : m_compJobs) {
-        if (j.jobId == jobId) return &j;
+        if (j.jobId == jobId && !j.phase) return &j;   // the input's own window (its phase job is a second entry)
     }
     return nullptr;
 }
@@ -4729,12 +4941,11 @@ void CloneEngine::compNoteClones(Job& job) {
 }
 
 void CloneEngine::compDiscard(int jobId) {
-    for (size_t i = 0; i < m_compJobs.size(); ++i) {
-        if (m_compJobs[i].jobId != jobId) continue;
+    for (size_t i = 0; i < m_compJobs.size();) {
+        if (m_compJobs[i].jobId != jobId) { ++i; continue; }
         compFree(m_compJobs[i]);
         ++m_compCounters.discarded;
         m_compJobs.erase(m_compJobs.begin() + static_cast<std::ptrdiff_t>(i));
-        return;
     }
 }
 
@@ -4748,11 +4959,76 @@ void CloneEngine::compFree(CompJob& job) {
     job.running.clear();
 }
 
+/// v0.15.0 (docs/SHIP_SOLVER.md §11.3): the PHASE search of the control that ends with this
+/// release - the press and the release moved together (the hold's duration kept), the inputs
+/// after the release free to compensate. Started when the release's local part is final; its
+/// result travels on the release's timing_result (`control.phase`). false = not started (no
+/// complete control, a portal inside the hold, a hold longer than the follower horizon, the job cap).
+bool CloneEngine::phaseConsider(Job& job, ResultEntry& e) {
+    auto const& cc = m_cfg.compensation;
+    if (!cc.enabled || !cc.phase || job.down || !job.connected || !m_saOn || std::isnan(job.pressFrame)) return false;
+    int const idx = logIndex(job.inputId);   // 1-based position of the release in the attempt's log
+    if (idx < 2 || static_cast<size_t>(idx) > m_log.size()) return false;
+    InputEvent const& press = m_log[static_cast<size_t>(idx - 2)];
+    if (!press.down || std::fabs(press.t - job.pressFrame) > 1e-9) return false;   // not this release's press
+    if (forcedBreakBetween(press.t, job.t)) return false;                           // a portal inside the hold
+    auto cfg = compConfigFor();
+    if (job.t - press.t > cfg.horizonFrames + 1e-9) return false;                   // a long hold: out of the search's reach
+    int active = 0;
+    for (auto const& cj : m_compJobs) {
+        if (cj.planner.requested() > 0 || cj.planner.hasPending() || !cj.running.empty()) ++active;
+    }
+    if (active >= cc.maxJobs) {
+        ++m_compCounters.notStartedBudget;
+        return false;
+    }
+    CompJob pj;
+    pj.phase = true;
+    pj.jobId = job.id;
+    pj.inputId = press.id;
+    pj.index = job.attemptInputIndex;
+    pj.t = press.t;        // the control's start: the base snapshot and the delayed control reach back from here
+    pj.step = job.step;    // a step at or after the press: the ring lookups walk back from it
+    pj.down = true;
+    pj.startedMs = nowMs();
+    pj.localDone = true;   // a pair has no lockstep copies: every shift is decided by its own trial
+    solver::comp::CompMember m;
+    m.id = press.id;
+    m.frame = press.t;
+    m.down = true;
+    m.subtick = job.subtick;
+    // the early limit: the input before the press, else the attempt start
+    if (idx >= 3) {
+        m.earlyLimitFrames = std::max(0.0, press.t - m_log[static_cast<size_t>(idx - 3)].t - cfg.neighbourMarginFrames);
+        m.earlyLimitKind = solver::LimitKind::Neighbour;
+    }
+    else {
+        double f1 = 0.0;
+        m.earlyLimitFrames = frameOf(1, f1) ? std::max(0.0, press.t - f1) : solver::kNaN;
+        m.earlyLimitKind = solver::LimitKind::AttemptStart;
+    }
+    m.rigid.push_back({job.inputId, job.t, false});
+    std::vector<solver::comp::CompFollower> followers;
+    for (size_t i = static_cast<size_t>(idx); i < m_log.size(); ++i) {
+        auto const& le = m_log[i];
+        auto const& prev = m_log[i - 1];
+        followers.push_back({le.id, le.t, le.down, forcedBreakBetween(prev.t, le.t)});
+    }
+    pj.planner = solver::comp::CompPlanner(cfg, m, followers);
+    pj.planner.setNow(m_frame);
+    pj.planner.finalizeLocal({}, solver::kNaN);
+    m_compJobs.push_back(std::move(pj));
+    ++m_compCounters.phaseJobs;
+    e.phasePending = true;
+    return true;
+}
+
 void CloneEngine::compConsider(Job& job, ResultEntry& e) {
     // the local part of a connected job is final: hand the planner its final local view and let
     // the ledger wait for the compensation result (or take it now)
+    phaseConsider(job, e);   // v0.15.0: a release also starts its control's phase search
     if (e.compDone) {
-        m_ledger.localDone(job.id, false);
+        m_ledger.localDone(job.id, e.phasePending);
         return;
     }
     CompJob* cj = findComp(job.id);
@@ -4760,7 +5036,7 @@ void CloneEngine::compConsider(Job& job, ResultEntry& e) {
     if (!cj) {
         e.saRan = false;
         e.saWhy = Reason::SaNotMeasuredBudget;
-        m_ledger.localDone(job.id, false);
+        m_ledger.localDone(job.id, e.phasePending);
         return;
     }
     cj->planner.finalizeLocal(job.planner.outcomes(), job.lateLimitFrames);
@@ -4773,17 +5049,26 @@ void CloneEngine::compConsider(Job& job, ResultEntry& e) {
         cj->planner.finish(Reason::SaNotMeasuredBudget);
         ++m_compCounters.notStartedWide;
     }
+    e.compPending = true;
     m_ledger.localDone(job.id, true);
     if (cj->planner.done()) {
+        // compFinish may erase nothing itself: the entry is removed here (only the input's own job;
+        // its phase job keeps running)
         compFinish(*cj, true, Reason::SaUndecided, false);
-        compDiscard(job.id);
+        for (size_t i = 0; i < m_compJobs.size(); ++i) {
+            if (m_compJobs[i].jobId == job.id && !m_compJobs[i].phase) {
+                compFree(m_compJobs[i]);
+                m_compJobs.erase(m_compJobs.begin() + static_cast<std::ptrdiff_t>(i));
+                break;
+            }
+        }
     }
 }
 
 int CloneEngine::spawnCompControl(CompJob& job) {
     // the unshifted replay from the oldest base any trial of this job can use: it must match the
     // live player step for step once it has caught up (the local control rule, D7)
-    double const baseFrame = job.t - static_cast<double>(m_cfg.maxShiftTicks) - 1.0;
+    double const baseFrame = job.t - static_cast<double>(job.planner.config().rangeTicks()) - 1.0;   // v0.15.0: the walk's range (local + extra)
     int k0 = solver::timeline::stepForFrame(job.step, baseFrame, [this](int k, double& f) { return frameOf(k, f); });
     double f1 = 0.0;
     if (k0 < 1 && frameOf(1, f1)) k0 = 1;   // F7: the attempt start is a valid base (the ring holds step 1)
@@ -4889,8 +5174,17 @@ void CloneEngine::compTrialDone(CompJob& job, CompTrialRun& run, solver::comp::C
     run.clone = -1;
     switch (o.kind) {
         case solver::comp::CompOutcome::Kind::Pass:
-            ++m_compCounters.passes;
-            if (run.adaptation >= static_cast<int>(solver::SAAdaptation::Comp1)) ++m_compCounters.compensated;
+            switch (o.rejoin) {
+                case solver::rejoin::Kind::Exact: ++m_compCounters.rejoinExact; break;
+                case solver::rejoin::Kind::Approx: ++m_compCounters.rejoinApprox; break;
+                case solver::rejoin::Kind::Parallel: ++m_compCounters.rejoinParallel; break;
+                case solver::rejoin::Kind::LevelEnd: ++m_compCounters.levelEnd; break;
+                case solver::rejoin::Kind::None: ++m_compCounters.noRejoin; break;
+            }
+            if (solver::rejoin::rejoined(o.rejoin) || !job.planner.config().requireRejoin) {
+                ++m_compCounters.passes;
+                if (solver::isCompensated(static_cast<solver::SAAdaptation>(run.adaptation))) ++m_compCounters.compensated;
+            }
             break;
         case solver::comp::CompOutcome::Kind::Died: ++m_compCounters.fails; break;
         case solver::comp::CompOutcome::Kind::Invalid: ++m_compCounters.invalid; break;
@@ -4954,20 +5248,46 @@ void CloneEngine::compAfterStep(CompJob& job, CompTrialRun& run) {
     // the real player's state after this step is the ring snapshot of the next one
     auto const& next = m_hist[ring(c.stepDone + 1)];
     bool const have = next.step == c.stepDone + 1;
-    if (have && c.frameDone >= run.devFromFrame - 1e-9 && run.dev.size() < kMaxDevSamples) {
-        run.dev.push_back({c.frameDone, static_cast<double>(c.obj->getPositionY() - next.state.pos.y), c.obj->m_yVelocity - next.state.f.m_yVelocity});
-    }
+    double const dy = have ? static_cast<double>(c.obj->getPositionY() - next.state.pos.y) : 0.0;
+    double const dvy = have ? c.obj->m_yVelocity - next.state.f.m_yVelocity : 0.0;
+    if (have && c.frameDone >= run.devFromFrame - 1e-9 && run.dev.size() < kMaxDevSamples) run.dev.push_back({c.frameDone, dy, dvy});
     if (have) mirrorNextStepSpeed(c);
-    bool rejoined = false;
-    if (have && applied) {
-        if (samePhysicsAsSnapshot(c.obj, next.state)) rejoined = ++run.converged >= CONVERGE_STEPS;
-        else run.converged = 0;
-    }
     if (!applied && c.frameDone >= run.lookAheadFrame - 1e-9) {
         o.kind = solver::comp::CompOutcome::Kind::Invalid;
         o.reason = "a moved input was never applied";
         compTrialDone(job, run, std::move(o));
         return;
+    }
+    auto const& pcfg = job.planner.config();
+    if (pcfg.requireRejoin) {
+        // v0.15.0 (core/solver/rejoin.hpp, docs/SHIP_SOLVER.md §11.2): after every moved input was
+        // applied each step is compared with the recorded run. A re-join (exact; inside the
+        // tolerance and alive `settleFrames` later; or the same velocity on a nearby height at the
+        // look-ahead) ends the trial as a pass. Alive at the look-ahead without one is
+        // SURVIVES_NO_REJOIN: reported, never a pass of the window.
+        if (!have || !applied) return;
+        bool const exact = samePhysicsAsSnapshot(c.obj, next.state);
+        run.rejoin.step({c.frameDone, dy, dvy, exact || sameDiscreteAsSnapshot(c.obj, next.state), exact}, pcfg.rejoin);
+        if (run.rejoin.passed(pcfg.rejoin)) {
+            o.kind = solver::comp::CompOutcome::Kind::Pass;
+            o.rejoin = run.rejoin.kind();
+            o.rejoinFrame = run.rejoin.frame();
+            o.rejoinErrY = run.rejoin.errY();
+            o.rejoinErrVy = run.rejoin.errVy();
+            compTrialDone(job, run, std::move(o));
+            return;
+        }
+        if (run.rejoin.ended(pcfg.rejoin) || c.frameDone >= run.lookAheadFrame - 1e-9) {
+            o.kind = solver::comp::CompOutcome::Kind::Pass;
+            o.rejoin = solver::rejoin::Kind::None;
+            compTrialDone(job, run, std::move(o));
+        }
+        return;
+    }
+    bool rejoined = false;
+    if (have && applied) {
+        if (samePhysicsAsSnapshot(c.obj, next.state)) rejoined = ++run.converged >= CONVERGE_STEPS;
+        else run.converged = 0;
     }
     bool const settled = m_cfg.settle.enabled && applied && c.settle.settled;
     bool const horizon = applied && c.frameDone >= run.lookAheadFrame - 1e-9;
@@ -4983,7 +5303,12 @@ void CloneEngine::compAfterStep(CompJob& job, CompTrialRun& run) {
     }
     if (settled && !rejoined) ++m_counters.settled;
     o.kind = solver::comp::CompOutcome::Kind::Pass;
-    o.rejoined = rejoined;
+    o.rejoin = rejoined ? solver::rejoin::Kind::Exact : solver::rejoin::Kind::None;
+    if (rejoined) {
+        o.rejoinFrame = c.frameDone;
+        o.rejoinErrY = 0.0;
+        o.rejoinErrVy = 0.0;
+    }
     compTrialDone(job, run, std::move(o));
 }
 
@@ -4991,11 +5316,25 @@ void CloneEngine::compFinish(CompJob& job, bool ok, Reason why, bool proofFailed
     compFree(job);
     ResultEntry* e = m_ledger.data(job.jobId);
     std::string const work = fmt::format("{} trials / {} clone steps, control {} steps compared, {:.0f} ms", job.trials, job.cloneSteps, job.controlCompared, nowMs() - job.startedMs);
-    if (e) {
+    if (e && job.phase) {
+        // v0.15.0 (docs/SHIP_SOLVER.md §11.3): the phase search of the control this release ends.
+        // A dropped phase job (its control did not match, its snapshot left the ring) leaves the
+        // result without a phase; it says nothing about the input's own windows
+        if (ok) {
+            e->phase = job.planner.result();
+            e->phaseRan = true;
+            e->saTrials += job.planner.trials();
+            if (e->phase.decided) ++m_compCounters.phaseDecided;
+            slog(1, fmt::format("GPRL phase: control ending at input #{} (job {}) {}: {} | {}", job.index, job.jobId, e->phase.decided ? "decided" : "undecided", job.planner.describe(), work));
+        }
+        else slog(1, fmt::format("GPRL phase: control ending at input #{} (job {}) DROPPED {}: {} | {}", job.index, job.jobId, solver::status::name(why), job.fail, work));
+        e->phasePending = false;
+    }
+    else if (e) {
         if (ok) {
             e->sa = job.planner.result();
             e->saRan = true;
-            e->saTrials = job.planner.trials();
+            e->saTrials += job.planner.trials();
             e->saControls = job.controlCompared > 0 ? 1 : 0;
             e->saLookAheadFrame = job.lookAheadMax > 0.0 ? job.lookAheadMax : solver::kNaN;
             if (!job.saTraces.empty()) e->saTraces = std::move(job.saTraces);
@@ -5006,15 +5345,74 @@ void CloneEngine::compFinish(CompJob& job, bool ok, Reason why, bool proofFailed
         else {
             e->saRan = false;
             e->saWhy = why;
-            if (proofFailed) e->stateReplayValid = false;
+            if (proofFailed) {
+                e->stateReplayValid = false;
+                if (e->parity.valid) e->parity = job.parity;   // where the delayed control left the real run
+            }
             slog(1, fmt::format("GPRL comp: input #{} (job {}) DROPPED {}: {} | {}", job.index, job.jobId, solver::status::name(why), job.fail, work));
         }
         e->compDone = true;
-        if (m_ledger.state(job.jobId) == solver::LedgerState::AwaitingSA) {
-            m_ledger.saDone(job.jobId);
-            drainResults();
-        }
+        e->compPending = false;
     }
+    if (e && !e->compPending && !e->phasePending && m_ledger.state(job.jobId) == solver::LedgerState::AwaitingSA) {
+        m_ledger.saDone(job.jobId);
+        drainResults();
+    }
+}
+
+/// v0.15.0: the level end. Every lockstep trial is brought up to the run's last step; one still
+/// alive there with every moved input applied COMPLETED THE LEVEL - a pass that needs no re-join
+/// (nothing follows that could differ). Trials that could not be brought that far, or whose moved
+/// inputs lie beyond the end, were not tested. Then every job ends (open sides: sa_cut_by_restart).
+void CloneEngine::compLevelEnd(int target) {
+    if (m_compJobs.empty()) return;
+    Job ctx;
+    ctx.inputId = kNoInputId;
+    ctx.down = false;
+    ctx.subtick = m_cfg.subtick;
+    bool const run = !m_guard.breached();
+    double isoT0 = 0.0;
+    bool const iso = run && isoBegin(m_isoBefore, isoT0);
+    int steps = 0;
+    for (auto& job : m_compJobs) {
+        for (auto& r : job.running) {
+            if (r.clone < 0 || r.clone >= static_cast<int>(m_clones.size())) continue;
+            auto& c = m_clones[static_cast<size_t>(r.clone)];
+            while (run && c.state == CloneStatus::Running && c.stepDone < target && steps < kLevelEndSteps) {
+                if (simStep(c, ctx, c.stepDone + 1) >= 0) {
+                    ++steps;
+                    ++job.cloneSteps;
+                    ++m_compCounters.cloneSteps;
+                }
+                // deaths, invalid copies and re-joins BEFORE the last step are judged as always; the
+                // state after the last step is not compared (the real player is in its end animation)
+                if (c.state != CloneStatus::Running || c.stepDone < target) compAfterStep(job, r);
+                if (r.clone < 0) break;
+            }
+            if (r.clone < 0) continue;
+            auto& c2 = m_clones[static_cast<size_t>(r.clone)];
+            bool applied = true;
+            for (auto const& m : c2.moved) applied = applied && !m.pending;
+            solver::comp::CompOutcome o;
+            if (c2.state == CloneStatus::Running && applied && c2.stepDone >= target) {
+                o.kind = solver::comp::CompOutcome::Kind::Pass;
+                o.rejoin = solver::rejoin::Kind::LevelEnd;
+                o.rejoinFrame = c2.frameDone;
+                o.rejoinErrY = 0.0;
+                o.rejoinErrVy = 0.0;
+            }
+            else {
+                o.kind = solver::comp::CompOutcome::Kind::Invalid;
+                o.reason = "level end";
+                o.notTested = true;
+            }
+            compTrialDone(job, r, std::move(o));
+        }
+        std::erase_if(job.running, [](CompTrialRun const& r) { return r.clone < 0; });
+    }
+    if (iso) isoEnd(m_isoBefore, isoT0, "level_end_comp", nullptr);
+    if (run) isoFinishBreach();
+    compAbortAll(Reason::SaCutByRestart);
 }
 
 void CloneEngine::compAbortAll(Reason why) {
@@ -5090,6 +5488,7 @@ void CloneEngine::runCompensation(int target) {
                         if (!matchesSnapshot(c.obj, next.state, why)) {
                             controlFail = fmt::format("the delayed control differs from the recorded run at step {} (frame {:.1f}, base step {}): {} | control {}", c.stepDone,
                                                       c.frameDone, job.controlBaseStep, why, stateStr(c.obj));
+                            job.parity.note(c.frameDone, parityDiffSnapshot(c.obj, next.state));
                             break;
                         }
                         ++job.controlCompared;
@@ -5118,6 +5517,7 @@ void CloneEngine::runCompensation(int target) {
                 std::string why;
                 mirrorNextStepSpeed(c);
                 if (!statesMatch(c.obj, p1, why)) {
+                    job.parity.note(c.frameDone, parityDiff(p1, c.obj));
                     job.fail = fmt::format("the delayed control differs from the live player at step {} (frame {:.1f}, base step {}): {} | control {}", target, c.frameDone,
                                            job.controlBaseStep, why, stateStr(c.obj));
                     ++m_compCounters.controlMismatch;
@@ -5132,13 +5532,31 @@ void CloneEngine::runCompensation(int target) {
                     if (solver::diedWithReal(c.deathFrame, c.deathObjId, c.deathX, mk.frame, mk.obj, mk.x)) withReal = true;
                 }
                 if (withReal) {
-                    // the replay reproduced a real death inside the span: nothing to prove beyond it
+                    // the replay reproduced a real death inside the span: nothing to prove beyond it.
+                    // v0.15.0: a trial that had ALREADY re-joined the recorded run (inside the
+                    // tolerance, waiting for its settle time) is the recorded run from there on - the
+                    // death that follows is the player's own, not the shifted input's: a pass
+                    for (auto& run : job.running) {
+                        if (run.clone < 0 || run.clone >= static_cast<int>(m_clones.size())) continue;
+                        auto const& tc = m_clones[static_cast<size_t>(run.clone)];
+                        if (run.rejoin.kind() != solver::rejoin::Kind::Approx) continue;
+                        if (tc.state != CloneStatus::Running && tc.state != CloneStatus::Dead) continue;
+                        solver::comp::CompOutcome o;
+                        o.kind = solver::comp::CompOutcome::Kind::Pass;
+                        o.rejoin = solver::rejoin::Kind::Approx;
+                        o.rejoinFrame = run.rejoin.frame();
+                        o.rejoinErrY = run.rejoin.errY();
+                        o.rejoinErrVy = run.rejoin.errVy();
+                        compTrialDone(job, run, std::move(o));
+                    }
+                    std::erase_if(job.running, [](CompTrialRun const& r) { return r.clone < 0; });
                     job.planner.finish(Reason::SaDeathInSpan);
                     freeClone(c);
                     job.control = -1;
                     job.controlDone = true;
                 }
                 else {
+                    job.parity.note(c.deathFrame, {solver::parity::Field::Alive, 1.0, 0.0, -1.0});
                     job.fail = fmt::format("the delayed control died on #{} at x={:.0f} (frame {:.1f}) but the live player did not", c.deathObjId, c.deathObjX, c.deathFrame);
                     ++m_compCounters.controlMismatch;
                     compFinish(job, false, Reason::SaControlMismatch, true);
@@ -5170,10 +5588,14 @@ void CloneEngine::runCompensation(int target) {
 
 std::string CloneEngine::compSummary() const {
     auto const& k = m_compCounters;
-    return fmt::format("; compensation (ship): jobs {} ({} open), trials {} ({} passes, {} compensated, {} died, {} invalid, {} crossed), clone steps {}, controls {} (mismatch {}), "
-                       "decided {}, undecided {}, aborted {}, discarded {}, skipped wide {}, not started (budget) {}",
-                       k.jobs, m_compJobs.size(), k.trials, k.passes, k.compensated, k.fails, k.invalid, k.crossed, k.cloneSteps, k.controls, k.controlMismatch, k.decided,
-                       k.undecided, k.cutByRestart, k.discarded, k.notStartedWide, k.notStartedBudget);
+    // v0.15.0 (prompt §16): the search's cost per measured input and how the passes re-joined
+    double const perInput = k.jobs + k.phaseJobs > 0 ? static_cast<double>(k.trials) / static_cast<double>(k.jobs + k.phaseJobs) : 0.0;
+    return fmt::format("; compensation (ship): jobs {} + {} phase ({} open), trials {} ({:.1f} per job; {} passes, {} compensated, {} died, {} invalid, {} crossed), "
+                       "re-join exact {} / approx {} / parallel {} / level end {} / none {}, clone steps {}, controls {} (mismatch {}), "
+                       "decided {}, undecided {}, phase decided {}, aborted {}, discarded {}, skipped wide {}, not started (budget) {}",
+                       k.jobs, k.phaseJobs, m_compJobs.size(), k.trials, perInput, k.passes, k.compensated, k.fails, k.invalid, k.crossed, k.rejoinExact, k.rejoinApprox,
+                       k.rejoinParallel, k.levelEnd, k.noRejoin, k.cloneSteps, k.controls, k.controlMismatch, k.decided, k.undecided, k.phaseDecided, k.cutByRestart, k.discarded,
+                       k.notStartedWide, k.notStartedBudget);
 }
 
 }  // namespace gprl::clone

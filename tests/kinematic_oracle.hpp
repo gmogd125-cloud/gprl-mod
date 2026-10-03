@@ -207,6 +207,9 @@ public:
         double frame = 0.0;   // frame at the END of the tick
         double dy = 0.0;
         double dvy = 0.0;
+        bool discrete = false;   // mode, speed, gravity, size, hold and ground flag equal the reference's (rejoin.hpp)
+        bool exact = false;      // samePhysics with the reference
+        bool dead = false;       // the trial died in this tick (the sample is its state at the death)
     };
 
     solver::Outcome trial(solver::SnapshotId base, solver::InputSchedule const& schedule, double horizonSeconds) override {
@@ -259,7 +262,9 @@ public:
             ++m_steps;
             if (dev && static_cast<double>(k + 1) * tick >= fromMs - 1e-9 && static_cast<size_t>(k) < m_refStates.size()) {
                 auto const& r = m_refStates[static_cast<size_t>(k)];
-                dev->push_back({static_cast<double>(k + 1), s.y - r.y, s.vy - r.vy});
+                bool const discrete = s.mode == r.mode && s.speed == r.speed && s.flipped == r.flipped && s.mini == r.mini && s.holding == r.holding
+                                   && s.onGround == r.onGround;
+                dev->push_back({static_cast<double>(k + 1), s.y - r.y, s.vy - r.vy, discrete, !s.dead && s.samePhysics(r), s.dead});
             }
             if (s.dead) return solver::Outcome::died(static_cast<double>(k + 1) * tick, s.killer);
             if (k >= lastDiffTick && static_cast<size_t>(k) < m_refStates.size()) {

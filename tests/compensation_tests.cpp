@@ -15,85 +15,15 @@
 //                              compensated / the compensation block
 //
 // Nothing here is a real level; no number is a target.
-#include "test_util.hpp"
-#include "kinematic_oracle.hpp"
-
-#include "../core/solver/compensation.hpp"
-#include "../core/solver/pass_planner.hpp"
-#include "../core/solver/timing_result_event.hpp"
-#include "../core/solver/timing_status.hpp"
-#include "../core/telemetry.hpp"
-
-#include <algorithm>
-#include <cmath>
-#include <cstdio>
-#include <string>
-#include <vector>
+#include "ship_worlds.hpp"
 
 using namespace gprl;
 using namespace gprl::solver;
 using namespace gprl::solver::comp;
 using namespace gprl::test::kin;
+using namespace gprl::test::ship;
 
 namespace {
-
-constexpr double T = kTickMs;
-constexpr double kH = 0.5 + 10.0 / 240.0;
-constexpr double kMargin = 0.0024;
-
-InputSchedule schedule(std::vector<std::pair<double, bool>> const& ticks) {
-    InputSchedule s;
-    for (auto const& [tick, down] : ticks) s.inputs.push_back({tick * T, 1, Button::Jump, down});
-    return s;
-}
-double frameOf(InputSchedule const& s, size_t i) { return s.inputs[i].tMs / T; }
-double earlyLimitOf(InputSchedule const& s, size_t i) {
-    double t = frameOf(s, i);
-    if (i == 0) return std::min(10.0, t);
-    return std::min(10.0, t - frameOf(s, i - 1) - kMargin);
-}
-double lateLimitOf(InputSchedule const& s, size_t i) {
-    if (i + 1 >= s.inputs.size()) return kNaN;
-    return frameOf(s, i + 1) - frameOf(s, i) - kMargin;
-}
-
-PassPlanner solveLocal(KinematicOracle& o, InputSchedule const& s, size_t i) {
-    PlannerConfig pc;
-    PassPlanner p(pc, earlyLimitOf(s, i));
-    p.setEarlyLimitKind(i == 0 ? LimitKind::AttemptStart : LimitKind::Neighbour);
-    double late = lateLimitOf(s, i);
-    if (!std::isnan(late)) p.setLateLimit(late);
-    o.setReference(s);
-    runAgainstOracle(o, p, 0, s, i, kH);
-    return p;
-}
-
-/// One compensated trial on the oracle: the look-ahead from the trial's own fields, the deviation
-/// samples from the member's shifted frame, laterFixed by the offline rule.
-void oracleTrial(KinematicOracle& o, InputSchedule const& ref, InputSchedule const& sched, CompTrial const& t, CompOutcome& out) {
-    o.setReference(ref);
-    double first = t.moved.front().frame;
-    for (auto const& mv : t.moved) first = std::min(first, mv.frame);
-    double earliest = std::min(first, t.attributeAfterFrame);
-    double horizonSeconds = (t.lookAheadFrame - earliest) / 240.0;
-    std::vector<KinematicOracle::Dev> dev;
-    Outcome r = o.trialTrace(sched, horizonSeconds, t.devFromFrame * T, dev);
-    for (auto const& d : dev) out.dev.push_back({d.frame, d.dy, d.dvy});
-    switch (r.kind) {
-        case OutcomeKind::Survived: out.kind = CompOutcome::Kind::Pass; break;
-        case OutcomeKind::Resynced: out.kind = CompOutcome::Kind::Pass; out.rejoined = true; break;
-        case OutcomeKind::Died: {
-            out.kind = CompOutcome::Kind::Died;
-            out.deathFrame = r.tMs / T;
-            out.objectId = r.objectId;
-            std::vector<size_t> moved;
-            for (size_t k = 1; k < t.moved.size(); ++k) moved.push_back(static_cast<size_t>(t.moved[k].id) - 1);
-            out.laterFixed = laterFixedBefore(ref, static_cast<size_t>(t.moved.front().id) - 1, moved, r.tMs);
-            break;
-        }
-        case OutcomeKind::Invalid: out.kind = CompOutcome::Kind::Invalid; out.reason = r.reason; break;
-    }
-}
 
 struct CompSolved {
     PassPlanner local;
@@ -101,126 +31,11 @@ struct CompSolved {
     int trials = 0;
 };
 
-CompSolved solveComp(KinematicOracle& o, InputSchedule const& s, size_t i, CompConfig cfg = kComp, std::vector<size_t> breaks = {}) {
+CompSolved solveComp(KinematicOracle& o, InputSchedule const& s, size_t i, CompConfig cfg = gprl::test::fixtureComp(), std::vector<size_t> breaks = {}) {
     CompSolved r;
     r.local = solveLocal(o, s, i);
-    r.trials = runCompAgainstOracle(s, i, r.local, cfg, breaks, [&](InputSchedule const& sched, CompTrial const& t, CompOutcome& out) { oracleTrial(o, s, sched, t, out); }, r.comp);
+    r.trials = runCompAgainstOracle(s, i, r.local, cfg, breaks, [&](InputSchedule const& sched, CompTrial const& t, CompOutcome& out) { oracleTrial(o, s, sched, t, out, cfg); }, r.comp);
     return r;
-}
-
-// ---- brute force (the ground truth of a compensated shift) ----
-
-/// A shift passes by brute force when the member alone passes (local) or some follower offset
-/// vector within the range (k = 1..maxFollowers, order preserved) passes with the planner's look-ahead.
-bool bruteCompPass(KinematicOracle& o, InputSchedule const& s, size_t i, double shift, CompConfig const& cfg) {
-    auto run = [&](std::vector<double> const& offsets) {
-        auto m = s;
-        m.inputs[i].tMs += shift * T;
-        double last = frameOf(s, i) + shift;
-        double prev = last;
-        for (size_t j = 0; j < offsets.size(); ++j) {
-            size_t idx = i + 1 + j;
-            if (idx >= s.inputs.size()) return false;
-            double f = frameOf(s, idx) + offsets[j];
-            if (f <= prev + cfg.neighbourMarginFrames) return false;
-            if (idx + 1 < s.inputs.size() && j + 1 == offsets.size() && f >= frameOf(s, idx + 1) - cfg.neighbourMarginFrames) return false;
-            m.inputs[idx].tMs = f * T;
-            prev = f;
-            last = std::max(last, f);
-        }
-        double lookAhead = std::max(last + cfg.lookAheadFrames, last + cfg.convergeSteps + 1.0);
-        double earliest = std::min(frameOf(s, i) + shift, frameOf(s, i));
-        o.setReference(s);
-        return o.trial(0, m, (lookAhead - earliest) / 240.0).passed();
-    };
-    // local: the engine's look-ahead rule of the local job
-    {
-        auto m = s;
-        m.inputs[i].tMs += shift * T;
-        o.setReference(s);
-        bool crosses = i + 1 < s.inputs.size() && shift > 0 && frameOf(s, i) + shift >= frameOf(s, i + 1) - kMargin - 1e-9;
-        if (!crosses && o.trial(0, m, kH + (shift < 0 ? -shift / 240.0 : 0.0)).passed()) return true;
-    }
-    int const R = cfg.offsetRangeTicks;
-    for (int k = 1; k <= cfg.maxFollowers; ++k) {
-        if (i + static_cast<size_t>(k) >= s.inputs.size()) break;
-        if (frameOf(s, i + static_cast<size_t>(k)) > frameOf(s, i) + cfg.horizonFrames) break;
-        std::vector<double> off(static_cast<size_t>(k), shift - R);
-        // every lattice point of the k-cube (7^k <= 343)
-        for (int guard = 0; guard < 400; ++guard) {
-            if (run(off)) return true;
-            size_t j = 0;
-            while (j < off.size()) {
-                off[j] += 1.0;
-                if (off[j] <= shift + R + 1e-9) break;
-                off[j] = shift - R;
-                ++j;
-            }
-            if (j == off.size()) break;
-        }
-    }
-    return false;
-}
-
-struct Walk {
-    double lastPass = 0.0;
-    double firstFail = kNaN;
-};
-template <class Pred>
-Walk bruteWalk(Pred&& pass, double limit) {
-    Walk w;
-    for (int k = 1; k <= 10 && k <= limit + 1e-9; ++k) {
-        if (pass(static_cast<double>(k))) w.lastPass = k;
-        else { w.firstFail = k; break; }
-    }
-    return w;
-}
-
-double localEdgeTicks(BoundaryResult const& b) { return localEdgeFrames(b); }
-double localWidthTicks(WindowResult const& w) { return (w.latestMs - w.earliestMs) / T; }
-double widthTicks(SAWindow const& w) { return w.late.edgeFrames() - w.early.edgeFrames(); }
-
-// ---- worlds ----
-
-/// DEV FIXTURE ship: rests on a solid floor; `bands` = lethal rects (ceiling / floor bands).
-World shipBase() {
-    World w;
-    w.startMode = Mode::Ship;
-    w.startY = 0.0;
-    w.half = 3.0;
-    w.shipGravity = 0.03;
-    w.floor.pts = {{-100.0, -3.0}, {5000.0, -3.0}};
-    return w;
-}
-
-/// The reference path's y at a tick (free flight in `w`).
-std::vector<State> pathOf(World w, InputSchedule const& s, int64_t ticks) {
-    w.spikes.clear();
-    KinematicOracle o(w);
-    return o.run(s, ticks);
-}
-
-/// PROMPT §14.11: a press whose timing only works when the release compensates. DEV FIXTURE
-/// found by a parameter scan (scratch explorer, 2026-10-02): gravity 0.06, thrust 0.08, the ship
-/// rests on a floor that ENDS right after take-off (no landing: nothing re-joins by the floor
-/// clamp), presses at 100, releases at 108, and flies a per-tick corridor of `clear` units around
-/// its recorded path over ticks [112, 124]. Shifting the press alone changes the hold (dies at
-/// once); shifting press + release together moves the whole arc in time (dies after ~2 ticks);
-/// a DIFFERENT release offset restores the height (passes up to ~6 ticks early).
-World criticalWorld(InputSchedule const& s, double clear) {
-    World w = shipBase();
-    w.shipGravity = 0.06;
-    w.shipThrust = 0.08;
-    w.floor.pts = {{-100.0, -3.0}, {1.3 * 109.0, -3.0}, {1.3 * 109.5, -600.0}, {5000.0, -600.0}};
-    auto path = pathOf(w, s, 420);
-    for (int k = 112; k <= 124; ++k) {
-        auto const& a = path[static_cast<size_t>(k - 1)];
-        auto const& b = path[static_cast<size_t>(k)];
-        double ymin = std::min(a.y, b.y), ymax = std::max(a.y, b.y);
-        w.spikes.push_back({a.x - 0.65, ymin - w.half - clear - 400.0, b.x + 0.65, ymin - w.half - clear, 21});
-        w.spikes.push_back({a.x - 0.65, ymax + w.half + clear, b.x + 0.65, ymax + w.half + clear + 400.0, 22});
-    }
-    return w;
 }
 
 bool hasAdaptation(SAResult const& r, SAAdaptation a) { return std::find(r.adaptationUsed.begin(), r.adaptationUsed.end(), a) != r.adaptationUsed.end(); }
@@ -286,7 +101,7 @@ void testCriticalCase() {
             for (int side = 0; side < 2; ++side) {
                 if (!r.sideDecided[side]) continue;
                 double sign = side ? 1.0 : -1.0;
-                auto bw = bruteWalk([&](double k) { return bruteCompPass(o, s, 0, sign * k, kComp); }, 10.0);
+                auto bw = bruteWalk([&](double k) { return bruteCompPass(o, s, 0, sign * k, gprl::test::fixtureComp(), 1); }, 16);
                 SAEdge const& e = side ? r.sequence.late : r.sequence.early;
                 // the planner may stop short of brute force (its search is bounded: a verified pass
                 // is a LOWER bound of the window), never beyond it
@@ -329,7 +144,7 @@ void testCriticalCase() {
                 CHECK(built.payload.sequence.has_value());
                 if (built.payload.sequence) {
                     auto const& sq = *built.payload.sequence;
-                    CHECK(sq.solverVersion == std::string(kSASolverVersion) && sq.solverVersion == "gprl-clone-sa/5");
+                    CHECK(sq.solverVersion == std::string(kSASolverVersion) && sq.solverVersion == "gprl-clone-sa/6");
                     CHECK(std::find(sq.adaptationUsed.begin(), sq.adaptationUsed.end(), "comp1") != sq.adaptationUsed.end());
                     CHECK(sq.compensation.has_value());
                     if (sq.compensation) CHECK(!sq.compensation->earlyOffsetsMs.empty() || !sq.compensation->lateOffsetsMs.empty());
@@ -473,7 +288,7 @@ void testDeterminismAndBudget() {
     SECTION("T-BUDGET: a tiny trial cap ends the open sides undecided (sa_not_measured_budget), never guessed; trials <= the cap");
     {
         KinematicOracle o(w);
-        CompConfig cfg = kComp;
+        CompConfig cfg = gprl::test::fixtureComp();
         cfg.maxTrialsPerInput = 2;
         auto sv = solveComp(o, s, 0, cfg);
         auto r = sv.comp.result();

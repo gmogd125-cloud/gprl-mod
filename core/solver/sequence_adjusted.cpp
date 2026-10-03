@@ -751,7 +751,7 @@ SAResult SAPlanner::result(int mi) const {
         r.sideDecided[s] = m.sa[s].ended && st != EdgeStop::Undecided && st != EdgeStop::Untested;
     }
     r.decided = r.sideDecided[0] && r.sideDecided[1];
-    bool used[4] = {false, false, false, false};
+    bool used[kSAAdaptationCount] = {};
     bool budget = false, invalid = false, finishReason = false;
     for (int s = 0; s < 2; ++s) {
         for (auto const& slot : m.sa[s].slots) {

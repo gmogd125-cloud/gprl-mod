@@ -43,8 +43,9 @@ std::string historyText(HistoryEntry const& e, DisplayParams const& p) {
     std::string tail = e.suffix.empty() ? std::string() : " | " + e.suffix;
     if (!e.ok) return head + " dropped: " + (e.reason.empty() ? std::string("unknown") : e.reason) + tail;
     std::string edges = "[" + std::string(e.boundedEarly ? "" : "<") + signed2(e.earlyMs) + " " + signed2(e.lateMs) + (e.boundedLate ? "" : ">") + "]";
-    if (e.miss) return head + " miss " + fixed2(e.widthMs) + " ms " + edges + tail;
-    return head + " " + fixed2(e.widthMs) + " ms " + edges + tail;
+    std::string const label = e.frozen ? "frozen " : "";
+    if (e.miss) return head + " miss " + label + fixed2(e.widthMs) + " ms " + edges + tail;
+    return head + " " + label + fixed2(e.widthMs) + " ms " + edges + tail;
 }
 
 Tone historyTone(HistoryEntry const& e) {

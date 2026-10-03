@@ -33,6 +33,13 @@ bool sameOffsets(std::vector<double> const& a, std::vector<double> const& b) {
     return true;
 }
 
+bool allEqual(std::vector<double> const& off, double s) {
+    for (double v : off) {
+        if (std::fabs(v - s) > kEps) return false;
+    }
+    return true;
+}
+
 /// Local contiguous pass run of one side and the far end of its bracket (SAPlanner's localRun).
 struct LocalRun {
     double run = 0.0;
@@ -61,12 +68,20 @@ LocalRun localRunOf(std::vector<ShiftOutcome> const& local, bool late, double li
     return r;
 }
 
+/// The reason an Invalid outcome gives a slot: `sa_undecided` for a trial that could not be decided
+/// (cancelled, crossed), `sa_invalid_trials` for a failed proof (F6).
+status::Reason invalidWhy(CompOutcome const* o) {
+    return o && o->notTested ? status::Reason::SaUndecided : status::Reason::SaInvalidTrials;
+}
+
 }  // namespace
 
 // ---- construction and facts ----
 
-CompPlanner::CompPlanner(CompConfig const& cfg, CompMember member, std::vector<CompFollower> followers) : m_cfg(cfg), m_m(member) {
-    double const maxShift = static_cast<double>(std::max(1, m_cfg.maxShiftTicks));
+CompPlanner::CompPlanner(CompConfig const& cfg, CompMember member, std::vector<CompFollower> followers) : m_cfg(cfg), m_m(std::move(member)) {
+    m_cfg.maxFollowers = std::clamp(m_cfg.maxFollowers, 0, kMaxFollowers);
+    int const range = std::max(1, m_cfg.rangeTicks());
+    double const maxShift = static_cast<double>(range);
     auto off = timeline::gridOffsets(m_m.frame);
     for (int side = 0; side < 2; ++side) {
         Side& sd = m_side[side];
@@ -78,7 +93,7 @@ CompPlanner::CompPlanner(CompConfig const& cfg, CompMember member, std::vector<C
             sd.limitKind = m_m.earlyLimitKind;
         }
         double const offset = late ? off.late : off.early;
-        for (int k = 0; k < m_cfg.maxShiftTicks; ++k) {
+        for (int k = 0; k < range; ++k) {
             double mag = offset > 1e-9 ? offset + static_cast<double>(k) : static_cast<double>(k + 1);
             if (mag > sd.limit + kEps) break;
             if (mag <= kEps) continue;
@@ -86,13 +101,16 @@ CompPlanner::CompPlanner(CompConfig const& cfg, CompMember member, std::vector<C
             s.mag = mag;
             sd.slots.push_back(s);
         }
+        sd.walkLimit = sd.limit;
+        sd.walkKind = sd.limitKind;
     }
     for (auto const& f : followers) addFollower(f);
 }
 
 void CompPlanner::addFollower(CompFollower f) {
     if (m_breakSeen) return;
-    if (f.frame <= m_m.frame + kEps) return;   // not a later input
+    double const from = lastRigidFrame();
+    if (f.frame <= from + kEps) return;   // not after the member (and its rigid inputs)
     if (f.breakBefore) {
         // a cluster break: nothing from here on can follow; the input itself is the next FIXED one
         m_breakSeen = true;
@@ -101,13 +119,15 @@ void CompPlanner::addFollower(CompFollower f) {
         return;
     }
     // beyond the horizon: a fixed input; a later one cannot be a follower either (time order)
-    if (f.frame > m_m.frame + m_cfg.horizonFrames + kEps) {
+    if (f.frame > from + m_cfg.horizonFrames + kEps) {
         f.breakBefore = true;
         m_breakSeen = true;
         m_followers.push_back(f);
     }
     else {
+        // the cap keeps one more input: the next FIXED one after the last follower that may move
         if (static_cast<int>(m_followers.size()) >= m_cfg.maxFollowers + 1) return;
+        if (static_cast<int>(m_followers.size()) == m_cfg.maxFollowers) m_capSeen = true;   // it could have followed: the cap binds
         m_followers.push_back(f);
     }
     advanceAll();
@@ -123,10 +143,12 @@ int CompPlanner::followersUsable() const {
     return n;
 }
 
+bool CompPlanner::moreFollowersBeyondCap() const { return m_capSeen; }
+
 void CompPlanner::setNow(double frame) {
     if (frame <= m_now) return;
     m_now = frame;
-    if (!m_isolated && m_now >= m_m.frame + m_cfg.horizonFrames - kEps && followersUsable() == 0) m_isolated = true;
+    if (!m_isolated && m_now >= lastRigidFrame() + m_cfg.horizonFrames - kEps && followersUsable() == 0) m_isolated = true;
     advanceAll();
 }
 
@@ -173,6 +195,19 @@ void CompPlanner::finalizeLocal(std::vector<ShiftOutcome> const& all, double lat
         auto lr = localRunOf(all, late, localLimit);
         m_side[side].localRun = lr.run;
         m_side[side].localFail = lr.fail;
+        // CT-D6: a local side that is OPEN TO THE RANGE (it never failed inside the range the
+        // frozen search uses) keeps the local range: nothing to compensate, the extra range is not
+        // searched. A side open only up to the next input may still be widened by followers moving
+        // along (the pair shift), so its walk goes on. A rigid member (a phase search) has no local
+        // facts: its walk uses the whole range
+        double const localRange = static_cast<double>(std::max(1, m_cfg.maxShiftTicks));
+        bool const neighbourLimited = late ? (!std::isnan(lateLimitFrames) && lateLimitFrames < localRange - 1.0 + kEps)
+                                           : (m_side[side].limit < localRange - 1.0 + kEps);
+        m_side[side].localOpenStop = !neighbourLimited ? EdgeStop::Range : late ? EdgeStop::Neighbour : stopOf(m_side[side].limitKind);
+        if (std::isnan(lr.fail) && !neighbourLimited && m_m.rigid.empty() && !all.empty() && m_side[side].limit > localRange + kEps) {
+            m_side[side].walkLimit = localRange;
+            m_side[side].walkKind = LimitKind::Range;
+        }
     }
     m_localFinal = true;
     advanceAll();
@@ -180,8 +215,8 @@ void CompPlanner::finalizeLocal(std::vector<ShiftOutcome> const& all, double lat
 
 // ---- the search ----
 
-/// 1 = a follower shifted along by s acts before the death, 0 = none can (a follower that could
-/// still be logged before D + |s| is the caller's "wait" case).
+/// true = a follower (from index `fromFollower` on) shifted along by s acts before the death
+/// (a follower that could still be logged before D + |s| is the caller's "wait" case).
 bool CompPlanner::canFollowerAct(double s, double deathFrame, int fromFollower) const {
     if (s > 0.0) return false;   // a follower moved later acts later: had it acted, laterFixed >= 1
     int i = 0;
@@ -194,8 +229,11 @@ bool CompPlanner::canFollowerAct(double s, double deathFrame, int fromFollower) 
     return false;
 }
 
+/// Clamps `offsets` into the legal lattice of shift s (the range between "as recorded" and "moved
+/// along with the member" widened by offsetRangeTicks, the input order, the next fixed input) and
+/// gives the last moved frame. false = no legal schedule with that many followers.
 bool CompPlanner::legalOffsets(double s, std::vector<double>& offsets, double& lastMoved) const {
-    double prev = m_m.frame + s;   // the member's shifted frame
+    double prev = lastRigidFrame() + s;   // the member's (its last rigid input's) shifted frame
     int const k = static_cast<int>(offsets.size());
     int const usable = followersUsable();
     if (k > usable) return false;
@@ -204,16 +242,18 @@ bool CompPlanner::legalOffsets(double s, std::vector<double>& offsets, double& l
         auto const& f0 = m_followers.front();
         if (prev >= f0.frame - m_cfg.neighbourMarginFrames - kEps) return false;
     }
+    double const range = static_cast<double>(m_cfg.offsetRangeTicks);
     for (int j = 0; j < k; ++j) {
         auto const& f = m_followers[static_cast<size_t>(j)];
-        double lo = std::max(s - static_cast<double>(m_cfg.offsetRangeTicks), prev + m_cfg.neighbourMarginFrames - f.frame);
-        double hi = s + static_cast<double>(m_cfg.offsetRangeTicks);
+        double lo = std::max(std::min(s, 0.0) - range, prev + m_cfg.neighbourMarginFrames - f.frame);
+        double hi = std::max(s, 0.0) + range;
         // the next FIXED input (the follower after the last moved one, or the first unusable input)
         if (j == k - 1 && static_cast<size_t>(j + 1) < m_followers.size()) {
             double next = m_followers[static_cast<size_t>(j + 1)].frame;
             hi = std::min(hi, next - m_cfg.neighbourMarginFrames - f.frame);
         }
-        // whole ticks unless sub-tick placement is available
+        // whole ticks unless sub-tick placement is available (a follower moved along with a
+        // half-tick member keeps the member's fraction: the clamp does not round)
         if (!m_m.subtick) {
             lo = std::ceil(lo - kEps);
             hi = std::floor(hi + kEps);
@@ -241,8 +281,9 @@ int CompPlanner::request(int side, Slot& slot, double s, Role role, int probeInd
     t.followers = static_cast<int>(offsets.size());
     t.role = role;
     t.probeIndex = probeIndex;
-    t.adaptation = t.followers == 0 ? SAAdaptation::Local : role == Role::Uniform ? uniformAdaptation(t.followers) : compensatedAdaptation(t.followers);
+    t.adaptation = t.followers == 0 ? SAAdaptation::Local : allEqual(offsets, s) ? uniformAdaptation(t.followers) : compensatedAdaptation(t.followers);
     t.moved.push_back({m_m.id, m_m.down, m_m.frame + s});
+    for (auto const& r : m_m.rigid) t.moved.push_back({r.id, r.down, r.frame + s});
     for (int j = 0; j < t.followers; ++j) {
         auto const& f = m_followers[static_cast<size_t>(j)];
         t.moved.push_back({f.id, f.down, f.frame + offsets[static_cast<size_t>(j)]});
@@ -250,6 +291,7 @@ int CompPlanner::request(int side, Slot& slot, double s, Role role, int probeInd
     t.offsetsFrames = offsets;
     double last = m_m.frame + s;
     for (auto const& mv : t.moved) last = std::max(last, mv.frame);
+    t.lastMovedFrame = last;
     t.assessFrame = static_cast<size_t>(t.followers) < m_followers.size() ? m_followers[static_cast<size_t>(t.followers)].frame : last + m_cfg.horizonFrames;
     t.lookAheadFrame = std::max(last + m_cfg.lookAheadFrames, last + static_cast<double>(m_cfg.convergeSteps) + 1.0);
     t.attributeAfterFrame = m_m.frame;
@@ -278,28 +320,34 @@ bool CompPlanner::devAt(std::vector<DevSample> const& dev, double frame, DevSamp
 }
 
 std::vector<double> CompPlanner::solveOffsets(DevSample const& base, std::vector<DevSample> const& columns, double probe, double ridge) {
-    size_t const k = std::min<size_t>(columns.size(), 3);
+    constexpr size_t N = static_cast<size_t>(kMaxFollowers);
+    size_t const k = std::min<size_t>(columns.size(), N);
     std::vector<double> d(k, 0.0);
     if (k == 0 || !(probe > 0.0)) return d;
     // J (2 x k): column j = (dev(P_j) - dev(U)) / probe; unknown columns are dropped (offset 0)
-    std::array<std::array<double, 2>, 3> J{};
-    std::array<bool, 3> use{};
+    std::array<std::array<double, 2>, N> J{};
+    std::array<bool, N> use{};
     for (size_t j = 0; j < k; ++j) {
         auto const& c = columns[j];
         bool ok = std::isfinite(c.dy) && std::isfinite(c.dvy);
         use[j] = ok;
         J[j] = ok ? std::array<double, 2>{(c.dy - base.dy) / probe, (c.dvy - base.dvy) / probe} : std::array<double, 2>{0.0, 0.0};
     }
-    // normal equations (J^T J + ridge I) d = -J^T base, 3 x 3 at most, Gaussian elimination
-    double A[3][3] = {};
-    double b[3] = {};
+    // normal equations (J^T J + ridge I) d = -J^T base, k x k (k <= 6), Gauss-Jordan with pivoting
+    double A[N][N] = {};
+    double b[N] = {};
     for (size_t i = 0; i < k; ++i) {
         for (size_t j = 0; j < k; ++j) A[i][j] = J[i][0] * J[j][0] + J[i][1] * J[j][1] + (i == j ? ridge : 0.0);
         b[i] = -(J[i][0] * base.dy + J[i][1] * base.dvy);
-        if (!use[i]) {
-            for (size_t j = 0; j < k; ++j) A[i][j] = i == j ? 1.0 : 0.0;
-            b[i] = 0.0;
+    }
+    for (size_t i = 0; i < k; ++i) {
+        if (use[i]) continue;
+        // an unknown column takes no part: its row and column are the identity's, its offset 0
+        for (size_t j = 0; j < k; ++j) {
+            A[i][j] = i == j ? 1.0 : 0.0;
+            A[j][i] = i == j ? 1.0 : 0.0;
         }
+        b[i] = 0.0;
     }
     for (size_t col = 0; col < k; ++col) {
         size_t piv = col;
@@ -321,36 +369,266 @@ std::vector<double> CompPlanner::solveOffsets(DevSample const& base, std::vector
     return d;
 }
 
-std::vector<std::vector<double>> CompPlanner::candidates(Slot const& slot, double s) const {
-    // the response model from the uniform trial and the probes, at the latest common frame
+bool CompPlanner::isPass(CompOutcome const& o) const {
+    if (o.kind != CompOutcome::Kind::Pass) return false;
+    return !m_cfg.requireRejoin || rejoin::rejoined(o.rejoin);
+}
+
+void CompPlanner::passSlot(Slot& slot, double s, CompOutcome const& o, std::vector<double> offsets) {
+    // followers left as recorded at the end of the schedule did not take part: the pass moved
+    // only the ones before them
+    while (!offsets.empty() && std::fabs(offsets.back()) <= kEps && std::fabs(s) > kEps) offsets.pop_back();
+    int const k = static_cast<int>(offsets.size());
+    slot.st = St::Pass;
+    slot.stage = Stage::Done;
+    slot.used = k == 0 ? SAAdaptation::Local : allEqual(offsets, s) ? uniformAdaptation(k) : compensatedAdaptation(k);
+    // docs/SHIP_SOLVER.md §4.1, §11.2: an exact re-join (or the level end: nothing follows) is
+    // `rejoined`; a re-join inside the tolerance is `compensated`; without requireRejoin a settled
+    // pass with adapted followers is `compensated` and the member alone that only settled `survived`
+    if (o.rejoin == rejoin::Kind::Exact || o.rejoin == rejoin::Kind::LevelEnd) slot.proof = SAProof::Rejoined;
+    else if (o.rejoin == rejoin::Kind::Approx || o.rejoin == rejoin::Kind::Parallel) slot.proof = SAProof::Compensated;
+    else slot.proof = k == 0 ? SAProof::Survived : SAProof::Compensated;
+    slot.offsets = std::move(offsets);
+    slot.rejoin = o.rejoin;
+    slot.rejoinFrame = o.rejoinFrame;
+    slot.rejoinErrY = o.rejoinErrY;
+    slot.rejoinErrVy = o.rejoinErrVy;
+}
+
+void CompPlanner::resetModel(Slot& slot) {
+    slot.base.clear();
+    slot.baseId = -1;
+    slot.baseWarm = false;
+    slot.probeIds.clear();
+    slot.probeSteps.clear();
+    slot.wantOwnProbes = false;
+    slot.ownAll = false;
+    slot.modelBuilt = false;
+    slot.pendingCands.clear();
+    slot.verifyIds.clear();
+    slot.allVerifyIds.clear();
+    slot.bestId = -1;
+    slot.bestScore = -1e300;
+    slot.rebases = 0;
+}
+
+/// How far a trial that did not pass got: alive at its look-ahead beats every death, the smaller
+/// its deviation the better; among deaths the later one.
+double CompPlanner::scoreOf(CompOutcome const& o) const {
+    if (o.kind == CompOutcome::Kind::Pass) {
+        double norm = 0.0;
+        if (!o.dev.empty()) {
+            auto const& d = o.dev.back();
+            norm = std::fabs(d.dy) / std::max(1e-9, m_cfg.rejoin.tolY) + std::fabs(d.dvy) / std::max(1e-9, m_cfg.rejoin.tolVy);
+        }
+        return 1e6 - std::min(norm, 1e5);
+    }
+    if (o.kind == CompOutcome::Kind::Died && !std::isnan(o.deathFrame)) return o.deathFrame - m_m.frame;
+    return -1e300;
+}
+
+/// A finished trial of the slot that did not pass: the flags the escalation rules read, and the
+/// trial that got furthest (the base the search continues from).
+void CompPlanner::noteOutcome(Slot& slot, int trialId, CompOutcome const& o) {
+    if (o.kind == CompOutcome::Kind::Died && o.laterFixed >= 1) slot.fixedActed = true;
+    if (o.kind == CompOutcome::Kind::Pass && !rejoin::rejoined(o.rejoin)) slot.survived = true;   // alive without a re-join
+    if (o.kind == CompOutcome::Kind::Invalid) return;
+    double const score = scoreOf(o);
+    if (score > slot.bestScore + 1e-9) {
+        slot.bestScore = score;
+        slot.bestId = trialId;
+    }
+}
+
+/// The family's search continues from `trialId` (already simulated): it is the base now, the
+/// probes are asked again where no known response reaches as far as it got.
+void CompPlanner::rebase(Slot& slot, int trialId, std::vector<double> offsets) {
+    slot.base = std::move(offsets);
+    slot.baseId = trialId;
+    slot.baseWarm = false;
+    slot.probeIds.assign(slot.base.size(), -1);
+    slot.probeSteps.assign(slot.base.size(), 0.0);
+    slot.wantOwnProbes = false;
+    slot.modelBuilt = false;
+    slot.pendingCands.clear();
+    slot.verifyIds.clear();
+    slot.allVerifyIds.clear();
+    slot.stage = Stage::Probes;
+}
+
+/// The WARM base (CT-D5): the schedule of the nearest passing slot of this side closer to 0 that
+/// moved followers, continued to this shift - along the trend of the last TWO such schedules when
+/// they moved the same followers (compensations of neighbouring shifts change linearly: each
+/// follower by its own step per tick), else moved along by the difference of the shifts.
+/// false = none (the uniform base).
+bool CompPlanner::warmBase(int side, Slot const& slot, double s, std::vector<double>& base) const {
+    Side const& sd = m_side[side];
+    Slot const* from = nullptr;
+    Slot const* before = nullptr;
+    for (auto const& x : sd.slots) {
+        if (x.mag >= slot.mag - kEps) break;
+        if (x.st != St::Pass) continue;
+        if (!x.offsets.empty()) {
+            before = from;
+            from = &x;
+        }
+        else {   // a nearer LOCAL pass: no schedule to continue
+            from = nullptr;
+            before = nullptr;
+        }
+    }
+    if (!from) return false;
+    double const sign = side == 1 ? 1.0 : -1.0;
+    double const delta = s - sign * from->mag;
+    int const usable = followersUsable();
+    int const k = std::min(std::max(static_cast<int>(from->offsets.size()), slot.k), usable);
+    if (k < 1) return false;
+    // followers beyond the continued schedule: moved along when the local death says they acted
+    // (slot.k), else left as recorded
+    base.assign(static_cast<size_t>(k), 0.0);
+    for (size_t j = from->offsets.size(); j < base.size(); ++j) base[j] = s;
+    // the trend only between NEIGHBOURING shifts one step apart, and only when it is a plausible
+    // continuation (no follower moving more than two ticks per tick of shift): two schedules of a
+    // different shape extrapolate to nonsense
+    bool trend = before && before->offsets.size() == from->offsets.size() && from->mag - before->mag > kEps
+              && std::fabs(std::fabs(delta) - (from->mag - before->mag)) <= kEps;
+    if (trend) {
+        for (size_t j = 0; j < from->offsets.size(); ++j) {
+            double const per = (from->offsets[j] - before->offsets[j]) / (sign * (from->mag - before->mag));
+            if (std::fabs(per) > 2.0 + kEps) trend = false;
+        }
+    }
+    for (size_t j = 0; j < from->offsets.size() && j < base.size(); ++j) {
+        double step = delta;   // along with the member
+        if (trend) step = (from->offsets[j] - before->offsets[j]) / (sign * (from->mag - before->mag)) * delta;
+        base[j] = from->offsets[j] + (m_m.subtick ? step : std::round(step));
+    }
+    return true;
+}
+
+/// One probe of this slot: its base with `follower` moved one tick more (or, when that is not a
+/// new legal schedule - the range / the next fixed input clamps it back onto the base - one less).
+void CompPlanner::requestProbe(int side, Slot& slot, double s, int follower) {
+    size_t const j = static_cast<size_t>(follower);
+    if (slot.probeIds.size() < slot.base.size()) {
+        slot.probeIds.resize(slot.base.size(), -1);
+        slot.probeSteps.resize(slot.base.size(), 0.0);
+    }
+    if (j >= slot.base.size() || slot.probeIds[j] != -1) return;
+    slot.probeIds[j] = -2;   // asked for: not asked again (even when nothing could be requested)
+    double const step = static_cast<double>(m_cfg.probeOffsetTicks);
+    for (double dir : {1.0, -1.0}) {
+        std::vector<double> po = slot.base;
+        po[j] += dir * step;
+        int id = request(side, slot, s, Role::Probe, follower, po);
+        if (id >= 0) {
+            auto got = offsetsOf(id);
+            slot.probeIds[j] = id;
+            slot.probeSteps[j] = got[j] - slot.base[j];
+            return;
+        }
+        if (id == -1) slot.budgetCut = true;
+        if (id == -1 || id == -2) return;   // budget / finished: no more requests
+    }
+}
+
+/// The response of one follower measured by this slot's own probe: the trace of
+/// (dev(probe) - dev(base)) per tick of offset. false = no usable probe of that follower.
+bool CompPlanner::ownColumn(Slot const& slot, int follower, std::vector<DevSample>& col) const {
+    col.clear();
+    size_t const j = static_cast<size_t>(follower);
+    if (j >= slot.probeIds.size() || slot.probeIds[j] < 0) return false;
+    double const step = slot.probeSteps[j];
+    if (std::fabs(step) < 1e-9) return false;
+    CompOutcome const* u = known(slot.baseId);
+    CompOutcome const* p = known(slot.probeIds[j]);
+    if (!u || !p || u->dev.empty() || p->dev.empty()) return false;
+    size_t bi = 0;
+    for (auto const& d : p->dev) {
+        // frames are step ends: both traces carry the same frames while both are alive
+        while (bi < u->dev.size() && u->dev[bi].frame < d.frame - kEps) ++bi;
+        if (bi >= u->dev.size()) break;
+        if (std::fabs(u->dev[bi].frame - d.frame) > kEps) continue;
+        col.push_back({d.frame, (d.dy - u->dev[bi].dy) / step, (d.dvy - u->dev[bi].dvy) / step});
+    }
+    return !col.empty();
+}
+
+/// The response model the slot verifies with (CT-D5): per follower its OWN probe when it has
+/// one, else the cached response of k followers, else the one cached for a smaller family (the
+/// response of a follower barely depends on how many later inputs move). An empty column = not
+/// known: that follower's offset is not modelled (and gets a probe when the slot asks for one).
+CompPlanner::Response CompPlanner::modelOf(Slot const& slot) const {
+    Response m;
+    int const k = std::max(0, slot.k);
+    m.columns.assign(static_cast<size_t>(k), {});
+    if (m_cfg.reuseResponse) {
+        for (int kk = k; kk >= 1; --kk) {
+            auto it = m_response.find(kk);
+            if (it == m_response.end()) continue;
+            for (size_t j = 0; j < it->second.columns.size() && j < m.columns.size(); ++j) {
+                if (m.columns[j].empty()) m.columns[j] = it->second.columns[j];
+            }
+        }
+    }
+    for (int j = 0; j < k; ++j) {
+        std::vector<DevSample> col;
+        if (ownColumn(slot, j, col)) m.columns[static_cast<size_t>(j)] = std::move(col);
+    }
+    return m;
+}
+
+/// Some other slot is measuring a response of k followers right now (its probes are in flight):
+/// the same response is not measured twice at once (both sides usually need it in the same round).
+bool CompPlanner::probesInFlight(int k, Slot const* except) const {
+    for (int side = 0; side < 2; ++side) {
+        for (auto const& x : m_side[side].slots) {
+            if (&x == except || x.k != k || x.st != St::Open) continue;
+            for (int id : x.probeIds) {
+                if (id >= 0 && !known(id)) return true;
+            }
+        }
+    }
+    return false;
+}
+
+std::vector<std::vector<double>> CompPlanner::candidates(Slot const& slot, double s, Response const* model) const {
+    // the response model at the latest frame the base trial and every known column reach
     std::vector<std::vector<double>> out;
     int const k = slot.k;
-    if (k <= 0) return out;
-    CompOutcome const* u = known(slot.uniformId);
-    std::vector<CompOutcome const*> probes;
-    for (int id : slot.probeIds) probes.push_back(id >= 0 ? known(id) : nullptr);
-    double common = 1e300;
-    auto endOf = [](CompOutcome const* o) {
-        if (!o || o->dev.empty()) return -1e300;
-        return o->dev.back().frame;
-    };
-    if (u) common = std::min(common, endOf(u));
-    for (auto const* p : probes) if (p) common = std::min(common, endOf(p));
+    if (k <= 0 || static_cast<int>(slot.base.size()) != k) return out;
+    CompOutcome const* u = known(slot.baseId);
     DevSample base;
     std::vector<double> d(static_cast<size_t>(k), 0.0);
     bool modelled = false;
-    if (u && common > -1e299 && devAt(u->dev, common, base)) {
-        std::vector<DevSample> cols;
-        for (int j = 0; j < k; ++j) {
-            DevSample c{common, kNaN, kNaN};
-            if (static_cast<size_t>(j) < probes.size() && probes[static_cast<size_t>(j)]) devAt(probes[static_cast<size_t>(j)]->dev, common, c);
-            cols.push_back(c);
+    if (u && !u->dev.empty() && model) {
+        double common = u->dev.back().frame;
+        bool any = false;
+        for (auto const& col : model->columns) {
+            if (col.empty()) continue;
+            common = std::min(common, col.back().frame);
+            any = true;
         }
-        d = solveOffsets(base, cols, static_cast<double>(m_cfg.probeOffsetTicks), m_cfg.ridge);
-        modelled = true;
+        if (any && devAt(u->dev, common, base)) {
+            std::vector<DevSample> cols;
+            for (int j = 0; j < k; ++j) {
+                DevSample c{common, kNaN, kNaN};
+                DevSample x;
+                if (static_cast<size_t>(j) < model->columns.size() && devAt(model->columns[static_cast<size_t>(j)], common, x)) {
+                    // solveOffsets takes the probes' own deviations: base + response x one tick
+                    c.dy = base.dy + x.dy;
+                    c.dvy = base.dvy + x.dvy;
+                }
+                cols.push_back(c);
+            }
+            d = solveOffsets(base, cols, 1.0, m_cfg.ridge);
+            modelled = true;
+        }
     }
+    double const range = static_cast<double>(m_cfg.offsetRangeTicks);
+    double const lo = std::min(s, 0.0) - range, hi = std::max(s, 0.0) + range;
     auto push = [&](std::vector<double> off) {
-        for (auto& v : off) v = std::clamp(v, s - static_cast<double>(m_cfg.offsetRangeTicks), s + static_cast<double>(m_cfg.offsetRangeTicks));
+        for (auto& v : off) v = std::clamp(v, lo, hi);
         for (auto const& t : out) if (sameOffsets(t, off)) return;
         out.push_back(std::move(off));
     };
@@ -360,14 +638,14 @@ std::vector<std::vector<double>> CompPlanner::candidates(Slot const& slot, doubl
         double flipFrac = -1.0;
         for (size_t j = 0; j < static_cast<size_t>(k); ++j) {
             double r = std::round(d[j]);
-            v1[j] = s + r;
+            v1[j] = slot.base[j] + r;
             double frac = std::fabs(d[j] - r);
             if (frac > flipFrac + 1e-12) { flipFrac = frac; flip = j; }
         }
         // V2: the other rounding of the least decided component, or one more tick along the
         // largest offset when every component was already whole
         v2 = v1;
-        if (flipFrac > 1e-9) v2[flip] = s + (d[flip] > std::round(d[flip]) ? std::ceil(d[flip]) : std::floor(d[flip]));
+        if (flipFrac > 1e-9) v2[flip] = slot.base[flip] + (d[flip] > std::round(d[flip]) ? std::ceil(d[flip]) : std::floor(d[flip]));
         else {
             size_t big = 0;
             for (size_t j = 1; j < static_cast<size_t>(k); ++j) if (std::fabs(d[j]) > std::fabs(d[big])) big = j;
@@ -378,19 +656,13 @@ std::vector<std::vector<double>> CompPlanner::candidates(Slot const& slot, doubl
         push(v1);
         push(v2);
     }
-    // without a model (nothing sampled): the last follower one tick either way
-    std::vector<double> a(static_cast<size_t>(k), s), b(static_cast<size_t>(k), s);
-    a.back() = s + 1.0;
-    b.back() = s - 1.0;
+    // without a model (nothing sampled): the last follower one tick either way around the base
+    std::vector<double> a = slot.base, b = slot.base;
+    a.back() += 1.0;
+    b.back() -= 1.0;
     push(a);
     push(b);
     return out;
-}
-
-/// The reason an Invalid outcome gives a slot: `sa_undecided` for a trial that could not be decided
-/// (unsettled at the look-ahead, cancelled), `sa_invalid_trials` for a failed proof (F6).
-static status::Reason invalidWhy(CompOutcome const* o) {
-    return o && o->notTested ? status::Reason::SaUndecided : status::Reason::SaInvalidTrials;
 }
 
 void CompPlanner::failSlot(Slot& slot, CompOutcome const* death) {
@@ -414,46 +686,132 @@ void CompPlanner::failSlot(Slot& slot, CompOutcome const* death) {
     }
 }
 
-void CompPlanner::decideFromVerifications(int side, Slot& slot, double s) {
+void CompPlanner::undecide(int side, Slot& slot, status::Reason why) {
     (void)side;
-    (void)s;
-    // every verification of this (shift, k) died: escalate or fail
-    CompOutcome const* last = nullptr;
-    for (int id : slot.verifyIds) {
-        if (auto const* o = known(id); o && o->kind == CompOutcome::Kind::Died) last = o;
+    slot.st = St::Undecided;
+    slot.why = why;
+    slot.stage = Stage::Done;
+}
+
+/// CT-D6: an undecided slot that is no doubt about the window. The frozen search already says how
+/// far the side is open (to its range, or to the next input); what the compensation walk explores
+/// BEYOND that - the extra range, or the far side of the next input - is a bonus: when it cannot
+/// be decided, the side ends OPEN at its last pass with the stop the local side has. Only a side
+/// the frozen search bounded with a fail INSIDE its range can be left undecided.
+bool CompPlanner::openCut(int side, Slot const& slot) const {
+    if (slot.st != St::Undecided || slot.neighbourLimit || !m_localFinal || !m_m.rigid.empty()) return false;
+    Side const& sd = m_side[side];
+    double const localRange = static_cast<double>(std::max(1, m_cfg.maxShiftTicks));
+    return std::isnan(sd.localFail) || slot.mag > localRange + kEps;
+}
+
+/// One more follower joins the slot's family (CT-D4). The family's best trial stays the base
+/// and the new follower starts as recorded (offset 0: the same schedule, nothing to simulate
+/// again) - only its response is measured. When no trial of the family may serve (none, or the
+/// new follower cannot stay where it is behind it), the larger family starts over from its
+/// uniform / warm base.
+void CompPlanner::grow(int side, Slot& slot, double s) {
+    (void)side;
+    if (slot.bestId >= 0 && known(slot.bestId)) {
+        std::vector<double> ext = offsetsOf(slot.bestId);
+        if (static_cast<int>(ext.size()) <= slot.k) {
+            ext.resize(static_cast<size_t>(slot.k) + 1, 0.0);
+            std::vector<double> legal = ext;
+            double last = 0.0;
+            // 0 must be a legal offset of the new follower behind the best schedule
+            if (legalOffsets(s, legal, last) && sameOffsets(legal, ext)) {
+                int const best = slot.bestId;
+                double const score = slot.bestScore;
+                ++slot.k;
+                rebase(slot, best, ext);
+                slot.ownAll = false;
+                slot.rebases = 0;
+                slot.bestId = best;
+                slot.bestScore = score;
+                slot.triedOffsets.push_back(ext);   // the same schedule as the best trial: never simulated again
+                return;
+            }
+        }
     }
-    if (!last) last = known(slot.uniformId);
-    int const usable = followersUsable();
-    // F4 (docs §4.2 step 4): every trial died inside the adapted span, but the NEXT follower,
-    // shifted along, could still act before that death: escalate rather than fail
-    if (!slot.fixedActed && last && slot.k < std::min(usable, m_cfg.maxFollowers) && canFollowerAct(s, last->deathFrame, slot.k)) {
-        ++slot.k;
-        slot.stage = Stage::Uniform;
-        slot.uniformId = -1;
-        slot.probeIds.clear();
-        slot.verifyIds.clear();
-        slot.verifications = 0;
+    ++slot.k;
+    resetModel(slot);
+    slot.stage = Stage::Base;
+}
+
+/// A verification round ended without a pass. Either the next candidate of the model is requested,
+/// or one more follower joins (causal evidence that it matters), or the slot's own probes are
+/// measured (the last resort of a family that came close), or the slot is decided. Leaves the
+/// slot Open with a new stage (Verify / Probes / Base / Wait), or decided.
+void CompPlanner::afterVerifications(int side, Slot& slot, double s) {
+    // 0. the model's next candidate (one verification at a time: a pass ends the slot)
+    while (!slot.pendingCands.empty()) {
+        std::vector<double> c = std::move(slot.pendingCands.front());
+        slot.pendingCands.erase(slot.pendingCands.begin());
+        int id = request(side, slot, s, Role::Verify, -1, c);
+        if (id == -1) { slot.budgetCut = true; slot.pendingCands.clear(); break; }
+        if (id == -2) { undecide(side, slot, m_finishReason); return; }
+        if (id < 0) continue;   // illegal / duplicate candidate
+        slot.verifyIds.assign(1, id);
+        slot.stage = Stage::Verify;
         return;
     }
-    if (slot.fixedActed) {
-        if (slot.k < std::min(usable, m_cfg.maxFollowers)) {
-            // one more follower may move: the (k+1)-th acted before a death
-            ++slot.k;
-            slot.stage = Stage::Uniform;
-            slot.uniformId = -1;
-            slot.probeIds.clear();
-            slot.verifyIds.clear();
-            slot.verifications = 0;
+    if (slot.budgetCut) {
+        // the trial budget refused a probe / a candidate of this shift: the search was not finished,
+        // so nothing may be concluded from it (prompt §16: unresolved, never a guessed narrow window)
+        undecide(side, slot, status::Reason::SaNotMeasuredBudget);
+        return;
+    }
+    // 1. every candidate of this base failed. When some trial of the family got further than its
+    // base (alive closer to the recorded run, or dead later), the search continues from that trial
+    // (CT-D5): its own responses are measured where the known ones do not reach
+    if (slot.bestId >= 0 && slot.bestId != slot.baseId && slot.rebases < m_cfg.maxRebases && known(slot.bestId)
+        && static_cast<int>(offsetsOf(slot.bestId).size()) == slot.k) {
+        CompOutcome const* base = known(slot.baseId);
+        if (!base || slot.bestScore > scoreOf(*base) + 1e-9) {
+            ++slot.rebases;
+            rebase(slot, slot.bestId, offsetsOf(slot.bestId));
             return;
         }
-        bool const moreMayCome = !m_breakSeen && static_cast<int>(m_followers.size()) <= slot.k && slot.k < m_cfg.maxFollowers
-                              && m_now < m_m.frame + m_cfg.horizonFrames - kEps;
-        if (moreMayCome) return;   // wait for the next follower (or the horizon)
-        // a fixed later input acted and nothing can move it: a larger family could still change
-        // the outcome (V2-D2) - undecided, never guessed
-        slot.st = St::Undecided;
-        slot.why = status::Reason::SaUndecided;
-        slot.stage = Stage::Done;
+    }
+    // 2. one more follower joins when a trial showed that it matters (F4, docs §4.2 step 4): a
+    // fixed later input acted before some death, the NEXT follower shifted along could still act
+    // before the last death, or a schedule survived without re-joining (one more follower can
+    // bring it back)
+    CompOutcome const* last = nullptr;
+    for (int id : slot.allVerifyIds) {
+        if (auto const* o = known(id); o && o->kind == CompOutcome::Kind::Died) last = o;
+    }
+    if (!last) {
+        if (auto const* o = known(slot.baseId); o && o->kind == CompOutcome::Kind::Died) last = o;
+    }
+    int const usable = followersUsable();
+    bool const wantGrow = slot.fixedActed || slot.survived || (last && canFollowerAct(s, last->deathFrame, slot.k));
+    if (wantGrow && slot.k < usable) {
+        grow(side, slot, s);
+        return;
+    }
+    // 3. no larger family. Optionally every follower's response is measured HERE once more (the
+    // known responses were another schedule's) before the slot ends undecided
+    if (m_cfg.ownProbesLastResort && slot.survived && !slot.ownAll && slot.k >= 1) {
+        slot.ownAll = true;
+        rebase(slot, slot.baseId, slot.base);
+        slot.wantOwnProbes = true;
+        return;
+    }
+    if (slot.fixedActed || slot.survived) {
+        bool const moreMayCome = !m_breakSeen && !m_capSeen && static_cast<int>(m_followers.size()) <= slot.k && slot.k < m_cfg.maxFollowers
+                              && m_now < lastRigidFrame() + m_cfg.horizonFrames - kEps;
+        if (moreMayCome) {
+            slot.stage = Stage::Wait;   // the next follower (or the horizon) re-opens the decision
+            return;
+        }
+        // the follower CAP (compute), not causality, stopped the search: unresolved by budget, never
+        // a fail (CT-D4); a schedule survived but none re-joined: SURVIVES_NO_REJOIN (CT-D2); else a
+        // fixed later input acted and nothing may move it: a larger family could still change the
+        // outcome (V2-D2) - undecided, never guessed
+        if (slot.k >= m_cfg.maxFollowers && m_capSeen) undecide(side, slot, status::Reason::SaNotMeasuredBudget);
+        else if (slot.survived) undecide(side, slot, status::Reason::SaSurvivesNoRejoin);
+        else undecide(side, slot, status::Reason::SaUndecided);
         return;
     }
     failSlot(slot, last);
@@ -466,27 +824,28 @@ bool CompPlanner::decideLocal(int side, Slot& slot) {
     double const s = sign * slot.mag;
     if (!slot.localKnown) {
         // not tested locally yet. Once the local pass is final an untested shift beyond the local
-        // bracket is run as the member alone (k = 0, proof by its outcome; D3b), inside it never
+        // bracket is run by simulation (the member alone, or the nearest passing schedule moved
+        // along; proof by its outcome, D3b), inside it never
         if (!m_localFinal) return false;
         double const run = m_side[side].localRun, fail = m_side[side].localFail;
         if (slot.mag <= run + kEps) { slot.st = St::Pass; slot.used = SAAdaptation::Local; slot.proof = SAProof::Local; slot.stage = Stage::Done; return true; }
         if (!std::isnan(fail) && slot.mag < fail - kEps) return false;   // the local planner's gap: skipped by the walk
         slot.k = 0;
-        slot.stage = Stage::Uniform;
+        slot.stage = Stage::Base;
         return true;
     }
     auto const& lo = slot.local;
     if (passed(lo.kind)) { slot.st = St::Pass; slot.used = SAAdaptation::Local; slot.proof = SAProof::Local; slot.stage = Stage::Done; return true; }
-    if (lo.kind == ShiftKind::Invalid) { slot.st = St::Undecided; slot.why = status::Reason::SaInvalidTrials; slot.stage = Stage::Done; return true; }
+    if (lo.kind == ShiftKind::Invalid) { undecide(side, slot, status::Reason::SaInvalidTrials); return true; }
     if (lo.kind == ShiftKind::NotTested) {
         if (!m_localFinal) return false;
         slot.k = 0;
-        slot.stage = Stage::Uniform;
+        slot.stage = Stage::Base;
         return true;
     }
     // died in lockstep
     double const D = m_m.frame + lo.deathAfterFrames;
-    if (lo.extension) { slot.st = St::Undecided; slot.why = status::Reason::SaDeathInSpan; slot.stage = Stage::Done; return true; }
+    if (lo.extension) { undecide(side, slot, status::Reason::SaDeathInSpan); return true; }
     int k0 = lo.laterFixed;
     if (k0 <= 0) {
         if (!canFollowerAct(s, D)) {
@@ -501,152 +860,188 @@ bool CompPlanner::decideLocal(int side, Slot& slot) {
     int const usable = followersUsable();
     if (usable < 1) {
         // the input that acted lies across a break / beyond the horizon: nothing can move it
-        if (m_breakSeen || m_now >= m_m.frame + m_cfg.horizonFrames - kEps) {
-            slot.st = St::Undecided;
-            slot.why = status::Reason::SaUndecided;
-            slot.stage = Stage::Done;
+        if (m_breakSeen || m_now >= lastRigidFrame() + m_cfg.horizonFrames - kEps) {
+            undecide(side, slot, status::Reason::SaUndecided);
             return true;
         }
         return false;   // else wait for the follower to be logged
     }
-    slot.k = std::min({k0, usable, m_cfg.maxFollowers});
-    slot.stage = Stage::Uniform;
+    // the first schedule moves the followers that acted before the local death, at most
+    // startFollowersMax of them (CT-D4): the rest join only when a trial shows they matter
+    slot.k = std::min({k0, usable, std::max(1, m_cfg.startFollowersMax)});
+    slot.stage = Stage::Base;
     return true;
 }
 
-void CompPlanner::advanceSlot(int side, Slot& slot) {
+/// `frontier`: the slot is the nearest undecided one of its side. Only the frontier runs the
+/// expensive stages (probes, verifications, larger families); a slot beyond it runs its base trial
+/// (one simulation, in the same round) and then waits: if the frontier fails the side ends there.
+void CompPlanner::advanceSlot(int side, Slot& slot, bool frontier) {
     if (slot.st != St::Open || m_finished) return;
     double const sign = side == 1 ? 1.0 : -1.0;
     double const s = sign * slot.mag;
     if (slot.stage == Stage::None && !decideLocal(side, slot)) return;
     // ---- the compensation stages (each step either requests trials, waits, or decides) ----
-    for (int guard = 0; guard < 8 && slot.st == St::Open; ++guard) {
-        if (slot.stage == Stage::Uniform) {
-            if (slot.uniformId < 0) {
-                std::vector<double> off(static_cast<size_t>(slot.k), s);
-                int id = request(side, slot, s, Role::Uniform, -1, off);
-                if (id == -1) { slot.st = St::Undecided; slot.why = status::Reason::SaNotMeasuredBudget; slot.stage = Stage::Done; return; }
-                if (id == -2) { slot.st = St::Undecided; slot.why = m_finishReason; slot.stage = Stage::Done; return; }
+    int const guardMax = 8 * (kMaxFollowers + 2);
+    for (int guard = 0; guard < guardMax && slot.st == St::Open; ++guard) {
+        if (slot.stage == Stage::Wait) {
+            // waiting for one more follower to be logged (or for the horizon): the decision is taken again
+            if (!frontier) return;
+            afterVerifications(side, slot, s);
+            if (slot.stage == Stage::Wait) return;
+            continue;
+        }
+        if (slot.stage == Stage::Base) {
+            if (slot.baseId < 0) {
+                int id = -5;
+                // WARM: the nearest passing schedule of this side, continued to this shift
+                if (m_cfg.warmStart) {
+                    std::vector<double> w;
+                    if (warmBase(side, slot, s, w)) {
+                        bool const uniform = allEqual(w, s);
+                        id = request(side, slot, s, uniform ? Role::Uniform : Role::Warm, -1, w);
+                        if (id >= 0) {
+                            slot.base = offsetsOf(id);
+                            slot.k = static_cast<int>(slot.base.size());
+                            slot.baseWarm = !uniform;
+                        }
+                        else if (id == -3 || id == -4) id = -5;   // not a new legal schedule here: the uniform base
+                    }
+                }
+                if (id == -5) {
+                    std::vector<double> u(static_cast<size_t>(slot.k), s);
+                    id = request(side, slot, s, Role::Uniform, -1, u);
+                    if (id >= 0) {
+                        slot.base = offsetsOf(id);
+                        slot.baseWarm = false;
+                    }
+                }
+                if (id == -1) { undecide(side, slot, status::Reason::SaNotMeasuredBudget); return; }
+                if (id == -2) { undecide(side, slot, m_finishReason); return; }
                 if (id == -3) {
                     // no legal uniform schedule: the member (or a follower) would cross a fixed
                     // input. More followers moving may make room; when none can, the shift is out
                     // of reach the way a neighbour limit is (SAPlanner anyLegalMember): never a fail
-                    int const usable = followersUsable();
-                    if (slot.k < std::min(usable, m_cfg.maxFollowers)) { ++slot.k; continue; }
+                    if (slot.k < followersUsable()) { ++slot.k; continue; }
                     slot.st = St::Undecided;
                     slot.neighbourLimit = true;
                     slot.why = status::Reason::SaUndecided;
                     slot.stage = Stage::Done;
                     return;
                 }
-                if (id == -4) { slot.st = St::Undecided; slot.why = status::Reason::SaInvalidTrials; slot.stage = Stage::Done; return; }
-                slot.uniformId = id;
-                // the probes run in parallel with the uniform trial (one round instead of two)
-                slot.probeIds.clear();
-                for (int j = 0; j < slot.k; ++j) {
-                    std::vector<double> po(static_cast<size_t>(slot.k), s);
-                    po[static_cast<size_t>(j)] = s + static_cast<double>(m_cfg.probeOffsetTicks);
-                    int pid = request(side, slot, s, Role::Probe, j, po);
-                    slot.probeIds.push_back(pid >= 0 ? pid : -1);   // budget / illegal / duplicate: no column
-                }
+                if (id == -4) { undecide(side, slot, status::Reason::SaInvalidTrials); return; }
+                slot.baseId = id;
+                slot.probeIds.assign(slot.base.size(), -1);
+                slot.probeSteps.assign(slot.base.size(), 0.0);
                 return;   // waiting
             }
-            CompOutcome const* u = known(slot.uniformId);
+            CompOutcome const* u = known(slot.baseId);
             if (!u) return;
-            if (u->kind == CompOutcome::Kind::Pass) {
-                slot.st = St::Pass;
-                slot.used = slot.k == 0 ? SAAdaptation::Local : uniformAdaptation(slot.k);
-                // docs/SHIP_SOLVER.md §4.1: a settled pass with adapted followers is `compensated`
-                // (the proof a flying mode can give when an exact re-join is impossible); the member
-                // alone that only settled is `survived`
-                slot.proof = u->rejoined ? SAProof::Rejoined : slot.k == 0 ? SAProof::Survived : SAProof::Compensated;
-                slot.offsets = std::vector<double>(static_cast<size_t>(slot.k), s);
-                slot.stage = Stage::Done;
-                return;
-            }
-            if (u->kind == CompOutcome::Kind::Invalid) { slot.st = St::Undecided; slot.why = invalidWhy(u); slot.stage = Stage::Done; return; }
-            if (u->laterFixed >= 1) slot.fixedActed = true;
+            if (isPass(*u)) { passSlot(slot, s, *u, slot.base); return; }
+            if (u->kind == CompOutcome::Kind::Invalid) { undecide(side, slot, invalidWhy(u)); return; }
+            if (!frontier) return;   // the rest of this slot's search waits for the nearer shifts
+            noteOutcome(slot, slot.baseId, *u);
             if (slot.k == 0) {
-                // the member alone died: the same rule as a lockstep death
-                double const D = u->deathFrame;
-                if (u->extension) { slot.st = St::Undecided; slot.why = status::Reason::SaDeathInSpan; slot.stage = Stage::Done; return; }
-                if (u->laterFixed <= 0 && !canFollowerAct(s, D)) { failSlot(slot, u); return; }
+                // the member alone: the same rule as a lockstep death
+                bool const died = u->kind == CompOutcome::Kind::Died;
+                if (died && u->extension) { undecide(side, slot, status::Reason::SaDeathInSpan); return; }
+                if (died && u->laterFixed <= 0 && !canFollowerAct(s, u->deathFrame)) { failSlot(slot, u); return; }
                 int const usable = followersUsable();
-                if (usable < 1) { slot.st = St::Undecided; slot.why = status::Reason::SaUndecided; slot.stage = Stage::Done; return; }
-                slot.k = std::min({std::max(1, u->laterFixed), usable, m_cfg.maxFollowers});
-                slot.uniformId = -1;
-                continue;   // the uniform trial of k followers
+                if (usable < 1) {
+                    bool const moreMayCome = !m_breakSeen && m_now < lastRigidFrame() + m_cfg.horizonFrames - kEps;
+                    if (moreMayCome) return;   // a follower may still be logged
+                    undecide(side, slot, slot.survived ? status::Reason::SaSurvivesNoRejoin : status::Reason::SaUndecided);
+                    return;
+                }
+                if (!died) {
+                    // alive without a re-join: the first follower joins as recorded, its response is measured
+                    grow(side, slot, s);
+                    continue;
+                }
+                slot.k = std::min({std::max(1, u->laterFixed), usable, std::max(1, m_cfg.startFollowersMax)});
+                resetModel(slot);
+                continue;   // the base trial of k followers
             }
             slot.stage = Stage::Probes;
             continue;
         }
         if (slot.stage == Stage::Probes) {
+            if (!frontier) return;
+            // LAZY (CT-D5): a follower gets its own probe only when no response of it is known
+            // (cached or measured here) - or when the slot measures every follower itself
+            // (wantOwnProbes: the cached responses' candidates failed and no larger family exists)
+            if (slot.probeIds.size() < static_cast<size_t>(slot.k)) {
+                slot.probeIds.resize(static_cast<size_t>(slot.k), -1);
+                slot.probeSteps.resize(static_cast<size_t>(slot.k), 0.0);
+            }
+            Response const model = modelOf(slot);
+            // a known response is usable when it reaches (nearly) as far as the base trial got:
+            // the offsets are solved at the base's last frame
+            double baseEnd = -1e300;
+            if (CompOutcome const* u = known(slot.baseId); u && !u->dev.empty()) baseEnd = u->dev.back().frame;
+            std::vector<int> need;
+            for (int j = 0; j < slot.k; ++j) {
+                if (slot.probeIds[static_cast<size_t>(j)] != -1) continue;   // asked already
+                auto const& col = model.columns[static_cast<size_t>(j)];
+                bool const reaches = !col.empty() && col.back().frame >= baseEnd - static_cast<double>(m_cfg.rejoin.steps) - kEps;
+                if (slot.wantOwnProbes || !reaches) need.push_back(j);
+            }
+            if (!need.empty()) {
+                // the same response is being measured by another slot right now: its result is awaited
+                if (!slot.wantOwnProbes && m_cfg.reuseResponse && probesInFlight(slot.k, &slot)) return;
+                for (int j : need) requestProbe(side, slot, s, j);
+            }
             bool all = true;
             for (size_t j = 0; j < slot.probeIds.size(); ++j) {
                 int id = slot.probeIds[j];
                 if (id < 0) continue;
                 CompOutcome const* p = known(id);
                 if (!p) { all = false; continue; }
-                if (p->kind == CompOutcome::Kind::Pass) {
-                    // a probe that passed is a compensated pass
-                    slot.st = St::Pass;
-                    slot.used = compensatedAdaptation(slot.k);
-                    slot.proof = p->rejoined ? SAProof::Rejoined : SAProof::Compensated;
-                    slot.offsets.assign(static_cast<size_t>(slot.k), s);
-                    slot.offsets[j] = s + static_cast<double>(m_cfg.probeOffsetTicks);
-                    slot.stage = Stage::Done;
-                    return;
-                }
-                if (p->kind == CompOutcome::Kind::Died && p->laterFixed >= 1) slot.fixedActed = true;
+                // a probe that passed is a compensated pass
+                if (isPass(*p)) { passSlot(slot, s, *p, offsetsOf(id)); return; }
+                noteOutcome(slot, id, *p);
             }
-            if (!all) return;
+            if (!all) return;   // waiting for the probes
+            slot.wantOwnProbes = false;
+            // what was measured here is the cached response of this family from now on
+            if (m_cfg.reuseResponse) {
+                Response merged = modelOf(slot);
+                bool any = false;
+                for (auto const& c : merged.columns) any = any || !c.empty();
+                if (any) m_response[slot.k] = std::move(merged);
+            }
             slot.stage = Stage::Verify;
             continue;
         }
         if (slot.stage == Stage::Verify) {
-            if (slot.verifyIds.empty()) {
-                // every verification candidate at once (one round)
-                auto cands = candidates(slot, s);
-                int budgetHit = 0;
-                for (auto& c : cands) {
-                    if (slot.verifications >= m_cfg.verifyRoundings) break;
-                    int id = request(side, slot, s, Role::Verify, -1, c);
-                    if (id == -1) { budgetHit = -1; break; }
-                    if (id == -2) { budgetHit = -2; break; }
-                    if (id < 0) continue;   // illegal / duplicate candidate
-                    slot.verifyIds.push_back(id);
-                    ++slot.verifications;
-                }
-                if (slot.verifyIds.empty()) {
-                    if (budgetHit == -1) { slot.st = St::Undecided; slot.why = status::Reason::SaNotMeasuredBudget; slot.stage = Stage::Done; return; }
-                    if (budgetHit == -2) { slot.st = St::Undecided; slot.why = m_finishReason; slot.stage = Stage::Done; return; }
-                    // no new legal candidate: decide with what was simulated
-                    slot.verifications = m_cfg.verifyRoundings;
-                    decideFromVerifications(side, slot, s);
-                    if (slot.stage == Stage::Uniform) continue;
-                    return;
-                }
-                return;   // waiting
+            if (!frontier) return;
+            if (!slot.modelBuilt) {
+                slot.modelBuilt = true;
+                Response const model = modelOf(slot);
+                auto cands = candidates(slot, s, &model);
+                if (static_cast<int>(cands.size()) > m_cfg.verifyRoundings) cands.resize(static_cast<size_t>(std::max(0, m_cfg.verifyRoundings)));
+                slot.pendingCands = std::move(cands);
+                slot.verifyIds.clear();
+                afterVerifications(side, slot, s);   // requests the first candidate (or decides)
+                if (slot.st != St::Open || slot.stage == Stage::Wait) return;
+                if (slot.stage == Stage::Verify && !slot.verifyIds.empty()) return;   // waiting
+                continue;
             }
             bool all = true;
             for (int id : slot.verifyIds) {
                 CompOutcome const* v = known(id);
                 if (!v) { all = false; continue; }
-                if (v->kind == CompOutcome::Kind::Pass) {
-                    slot.st = St::Pass;
-                    slot.used = compensatedAdaptation(slot.k);
-                    slot.proof = v->rejoined ? SAProof::Rejoined : SAProof::Compensated;
-                    slot.offsets = offsetsOf(id);
-                    slot.stage = Stage::Done;
-                    return;
-                }
-                if (v->kind == CompOutcome::Kind::Invalid) { slot.st = St::Undecided; slot.why = invalidWhy(v); slot.stage = Stage::Done; return; }
-                if (v->laterFixed >= 1) slot.fixedActed = true;
+                if (isPass(*v)) { passSlot(slot, s, *v, offsetsOf(id)); return; }
+                if (v->kind == CompOutcome::Kind::Invalid) { undecide(side, slot, invalidWhy(v)); return; }
+                noteOutcome(slot, id, *v);
             }
             if (!all) return;
-            decideFromVerifications(side, slot, s);
-            if (slot.stage == Stage::Uniform) continue;   // escalated
-            return;
+            for (int id : slot.verifyIds) slot.allVerifyIds.push_back(id);
+            slot.verifyIds.clear();
+            afterVerifications(side, slot, s);
+            if (slot.st != St::Open || slot.stage == Stage::Wait) return;
+            if (slot.stage == Stage::Verify && !slot.verifyIds.empty()) return;   // waiting for the next candidate
+            continue;
         }
         return;
     }
@@ -666,6 +1061,7 @@ void CompPlanner::advanceSide(int side) {
         bool changed = false;
         int inFlight = 0;
         for (auto& slot : sd.slots) {
+            if (slot.mag > sd.walkLimit + kEps) break;
             if (m_localFinal) {
                 if (slot.mag <= sd.localRun + kEps) continue;
                 if (!std::isnan(sd.localFail) && slot.mag < sd.localFail - kEps) continue;
@@ -677,7 +1073,7 @@ void CompPlanner::advanceSide(int side) {
             St const before = slot.st;
             Stage const stageBefore = slot.stage;
             int const requestedBefore = m_requested;
-            advanceSlot(side, slot);
+            advanceSlot(side, slot, inFlight == 0);
             if (slot.st != before || slot.stage != stageBefore || m_requested != requestedBefore) changed = true;
             if (slot.st == St::Pass) continue;
             if (slot.st == St::Fail || slot.st == St::Undecided) break;
@@ -746,6 +1142,7 @@ bool CompPlanner::done() const {
     for (int side = 0; side < 2; ++side) {
         Side const& sd = m_side[side];
         for (auto const& s : sd.slots) {
+            if (s.mag > sd.walkLimit + kEps) break;
             if (s.mag <= sd.localRun + kEps) continue;
             if (!std::isnan(sd.localFail) && s.mag < sd.localFail - kEps) continue;
             if (s.st == St::Open) return false;
@@ -753,6 +1150,16 @@ bool CompPlanner::done() const {
         }
     }
     return true;
+}
+
+int CompPlanner::followersUsed() const {
+    int n = 0;
+    for (int side = 0; side < 2; ++side) {
+        for (auto const& s : m_side[side].slots) {
+            if (s.st == St::Pass) n = std::max(n, static_cast<int>(s.offsets.size()));
+        }
+    }
+    return n;
 }
 
 // ---- the result ----
@@ -765,15 +1172,16 @@ SAEdge CompPlanner::edgeOf(int side) const {
     SAProof weakest = SAProof::Local;
     double proven = sd.localRun;
     bool provenOpen = true;
-    std::vector<double> lastOffsets;
+    Slot const* lastPassSlot = nullptr;
     bool ended = false;
     Slot const* failSlotP = nullptr;
     // the late side: the member may not cross a FIXED next input (one that cannot follow)
     double fixedLimit = kNaN;
-    if (side == 1 && !m_followers.empty() && m_followers.front().breakBefore) fixedLimit = m_followers.front().frame - m_cfg.neighbourMarginFrames - m_m.frame;
-    EdgeStop limitStop = sd.limitKind == LimitKind::Range ? EdgeStop::Range : stopOf(sd.limitKind);
-    bool neighbourCut = false;
+    if (side == 1 && !m_followers.empty() && m_followers.front().breakBefore) fixedLimit = m_followers.front().frame - m_cfg.neighbourMarginFrames - lastRigidFrame();
+    EdgeStop limitStop = sd.walkKind == LimitKind::Range ? EdgeStop::Range : stopOf(sd.walkKind);
+    bool neighbourCut = false, rangeCut = false;
     for (auto const& s : sd.slots) {
+        if (s.mag > sd.walkLimit + kEps) break;
         if (s.mag <= sd.localRun + kEps) continue;
         if (!std::isnan(sd.localFail) && s.mag < sd.localFail - kEps) continue;
         if (!std::isnan(fixedLimit) && s.mag > fixedLimit + kEps) { neighbourCut = true; break; }
@@ -782,10 +1190,11 @@ SAEdge CompPlanner::edgeOf(int side) const {
             if (s.proof > weakest) weakest = s.proof;
             if (s.proof == SAProof::Survived) provenOpen = false;
             else if (provenOpen) proven = s.mag;
-            lastOffsets = s.offsets;
+            lastPassSlot = &s;
             continue;
         }
         if (s.st == St::Undecided && s.neighbourLimit) { neighbourCut = true; break; }
+        if (openCut(side, s)) { rangeCut = true; break; }   // CT-D6: open to its last pass
         ended = true;
         if (s.st == St::Fail) failSlotP = &s;
         break;
@@ -793,9 +1202,18 @@ SAEdge CompPlanner::edgeOf(int side) const {
     e.passFrames = sign * lastPass;
     e.proof = weakest;
     e.provenPassFrames = sign * std::min(proven, lastPass);
-    e.followerOffsetsFrames = lastOffsets;
+    if (lastPassSlot) {
+        e.followerOffsetsFrames = lastPassSlot->offsets;
+        if (lastPassSlot->used != SAAdaptation::Local || rejoin::rejoined(lastPassSlot->rejoin)) {
+            e.rejoin = lastPassSlot->rejoin;
+            if (!std::isnan(lastPassSlot->rejoinFrame)) e.rejoinAfterFrames = lastPassSlot->rejoinFrame - m_m.frame;
+            e.rejoinErrY = lastPassSlot->rejoinErrY;
+            e.rejoinErrVy = lastPassSlot->rejoinErrVy;
+        }
+    }
     if (!ended) {
-        e.stop = neighbourCut ? EdgeStop::Neighbour : limitStop;
+        // CT-D6: a side the walk could not decide beyond what the frozen search calls open ends there
+        e.stop = neighbourCut ? EdgeStop::Neighbour : rangeCut ? (std::isnan(sd.localFail) ? sd.localOpenStop : EdgeStop::Range) : limitStop;
         if (!m_localFinal) e.stop = EdgeStop::Undecided;
         return e;
     }
@@ -824,7 +1242,7 @@ SAEdge CompPlanner::edgeOf(int side) const {
 SAResult CompPlanner::result() const {
     SAResult r;
     r.valid = true;
-    r.isolated = m_isolated || (m_localFinal && followersUsable() == 0 && (m_breakSeen || m_now >= m_m.frame + m_cfg.horizonFrames - kEps));
+    r.isolated = m_isolated || (m_localFinal && followersUsable() == 0 && (m_breakSeen || m_now >= lastRigidFrame() + m_cfg.horizonFrames - kEps));
     r.sequence.present = true;
     r.sequence.early = edgeOf(0);
     r.sequence.late = edgeOf(1);
@@ -843,6 +1261,10 @@ SAResult CompPlanner::result() const {
         e.proof = SAProof::Local;
         e.provenPassFrames = e.passFrames;
         e.followerOffsetsFrames.clear();
+        e.rejoin = rejoin::Kind::None;
+        e.rejoinAfterFrames = kNaN;
+        e.rejoinErrY = kNaN;
+        e.rejoinErrVy = kNaN;
     }
     r.survivedOnly = r.sequence.early.proof == SAProof::Survived || r.sequence.late.proof == SAProof::Survived;
     double res = 0.0;
@@ -859,32 +1281,39 @@ SAResult CompPlanner::result() const {
     r.decided = r.sideDecided[0] && r.sideDecided[1];
     // D3a: both local sides open to the range and no comp work -> the sequence window IS the local one
     r.openRange = m_localFinal && std::isnan(m_side[0].localFail) && std::isnan(m_side[1].localFail) && m_requested == 0 && r.decided;
-    bool used[7] = {false, false, false, false, false, false, false};
-    bool budget = false, invalid = false, finishReason = false;
+    bool used[kSAAdaptationCount] = {};
+    bool budget = false, invalid = false, finishReason = false, noRejoin = false;
     for (int s = 0; s < 2; ++s) {
         Side const& sd = m_side[s];
         // the walk's own view (F3): the slots inside the local run and the local planner's gap are
         // not the planner's, and nothing beyond the slot that ended the side ever mattered
         for (auto const& slot : sd.slots) {
+            if (slot.mag > sd.walkLimit + kEps) break;
             if (slot.mag <= sd.localRun + kEps) continue;
             if (!std::isnan(sd.localFail) && slot.mag < sd.localFail - kEps) continue;
             if (slot.st == St::Pass) {
                 if (slot.used != SAAdaptation::Local) used[static_cast<int>(slot.used)] = true;
                 continue;
             }
-            if (slot.st == St::Undecided && !slot.neighbourLimit) {
+            if (slot.st == St::Undecided && !slot.neighbourLimit && !openCut(s, slot)) {
                 ++r.undecidedShifts;
                 if (slot.why == status::Reason::SaNotMeasuredBudget) budget = true;
                 else if (slot.why == status::Reason::SaInvalidTrials) invalid = true;
+                else if (slot.why == status::Reason::SaSurvivesNoRejoin) {
+                    noRejoin = true;
+                    r.survivedNoRejoin[s] = true;
+                }
                 else if (slot.why != status::Reason::SaUndecided) finishReason = true;
             }
             break;   // Fail / Undecided / neighbour: the side ends here
         }
     }
-    for (int k = 1; k <= 6; ++k) if (used[k]) r.adaptationUsed.push_back(static_cast<SAAdaptation>(k));
+    for (int k = 1; k < kSAAdaptationCount; ++k) if (used[k]) r.adaptationUsed.push_back(static_cast<SAAdaptation>(k));
+    r.followersUsed = followersUsed();
     if (finishReason) r.failure = m_finishReason;
     else if (budget) r.failure = status::Reason::SaNotMeasuredBudget;
     else if (invalid) r.failure = status::Reason::SaInvalidTrials;
+    else if (noRejoin) r.failure = status::Reason::SaSurvivesNoRejoin;
     else r.failure = status::Reason::SaUndecided;
     r.debug.push_back(describe());
     return r;
@@ -898,18 +1327,28 @@ std::string CompPlanner::describe() const {
         out += side == 1 ? "late" : " | early";
         int localPasses = 0;
         for (auto const& s : sd.slots) {
-            if (s.st == St::Pass && s.used == SAAdaptation::Local) { ++localPasses; continue; }
+            if (s.st == St::Pass && s.used == SAAdaptation::Local && !rejoin::rejoined(s.rejoin)) { ++localPasses; continue; }
             if (s.st == St::Open) continue;
             out += " " + fmtNum(sign * s.mag);
             switch (s.st) {
-                case St::Pass: out += std::string(" ") + name(s.used) + fmtOffsets(s.offsets) + " " + name(s.proof); break;
+                case St::Pass:
+                    out += std::string(" ") + name(s.used) + fmtOffsets(s.offsets) + " " + name(s.proof);
+                    if (s.rejoin == rejoin::Kind::Approx || s.rejoin == rejoin::Kind::Parallel) {
+                        char buf[64];
+                        std::snprintf(buf, sizeof buf, "%s(dy %.2f dvy %.3f)", s.rejoin == rejoin::Kind::Approx ? "~" : "=", s.rejoinErrY, s.rejoinErrVy);
+                        out += buf;
+                    }
+                    else if (s.rejoin == rejoin::Kind::LevelEnd) out += "(level end)";
+                    break;
                 case St::Fail: {
                     char buf[48];
                     std::snprintf(buf, sizeof buf, " fail@%.1f", s.deathFrame - m_m.frame);
                     out += buf;
                     break;
                 }
-                case St::Undecided: out += s.neighbourLimit ? std::string(" neighbour") : std::string(" undecided(") + status::name(s.why) + ")"; break;
+                case St::Undecided:
+                    out += s.neighbourLimit ? std::string(" neighbour") : std::string(openCut(side, s) ? " open(" : " undecided(") + status::name(s.why) + ")";
+                    break;
                 default: break;
             }
         }
@@ -917,7 +1356,7 @@ std::string CompPlanner::describe() const {
         SAEdge e = edgeOf(side);
         out += std::string(" -> ") + name(e.stop);
     }
-    out += " | followers " + std::to_string(followersUsable()) + (m_isolated ? " (isolated)" : "") + " | trials " + std::to_string(m_requested);
+    out += " | followers " + std::to_string(followersUsable()) + (m_capSeen ? "+" : "") + (m_isolated ? " (isolated)" : "") + " | trials " + std::to_string(m_requested);
     return out;
 }
 

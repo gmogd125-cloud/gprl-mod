@@ -120,7 +120,7 @@ enum class Reason : uint8_t {
     AllShiftsRejoined,
     // sequence_dependent
     SaUndecided, SaNotMeasuredBudget, SaExpired, SaNoNegativeControl, SaControlMismatch, SaNegativeNotReproduced, SaInvalidTrials,
-    SaCutByRestart, SaDeathInSpan, MissDownstream,
+    SaCutByRestart, SaDeathInSpan, SaSurvivesNoRejoin, MissDownstream,
     // low_confidence
     Miss, FrozenWorldExtension, UntestedGapInBracket, ResolutionAboveMax, WidthBelowResolution, IslandsNearEdge, ShadowMismatchNearby,
     HalfTickInput, SaNotMeasured, SpeedChangeInLookahead,
@@ -162,6 +162,7 @@ constexpr char const* name(Reason r) {
         case Reason::SaInvalidTrials: return "sa_invalid_trials";
         case Reason::SaCutByRestart: return "sa_cut_by_restart";
         case Reason::SaDeathInSpan: return "sa_death_in_span";
+        case Reason::SaSurvivesNoRejoin: return "sa_survives_no_rejoin";
         case Reason::MissDownstream: return "miss_downstream";
         case Reason::Miss: return "miss";
         case Reason::FrozenWorldExtension: return "frozen_world_extension";

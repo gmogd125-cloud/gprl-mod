@@ -268,6 +268,7 @@ bool onJobResult(clone::JobResult const& r) {
         lw.refined = r.refined;
         lw.miss = r.miss;
         lw.levelOnly = levelOnly;
+        lw.frozen = r.pre.gamemode == Gamemode::Ship;   // connected control: the local window is the frozen one
         lw.jobId = r.jobId;
         noteLastWindow(std::move(lw));
     }
@@ -344,12 +345,12 @@ bool onTimingResult(clone::TimingResultOut const& out) {
         ++s_resultsUnsent;
         sent = "NOT SENT (the telemetry session is not open)";
     }
-    else if (cs.telemetryRevision < telemetry::kCompensationRevision) {
+    else if (cs.telemetryRevision < telemetry::kControlsRevision) {
         ++s_resultsUnsent;
-        // v0.14.0: the compensation vocabulary (comp1..3, compensated, the compensation block) needs
-        // revision 6; v0.8.2: the gprl-timing-status/2 vocabulary (live_mutation_detected, ...) needed 5;
-        // an older validator would reject the WHOLE batch for one unknown status
-        sent = fmt::format("NOT SENT (this server validates telemetry revision {}, a timing_result of this mod needs {})", cs.telemetryRevision, telemetry::kCompensationRevision);
+        // v0.15.0: the controls/1 vocabulary (sa_survives_no_rejoin, chain_n / comp_n, the control and
+        // parity blocks) needs revision 7; v0.14.0: the compensation vocabulary needed 6; v0.8.2:
+        // gprl-timing-status/2 needed 5; an older validator would reject the WHOLE batch for one unknown word
+        sent = fmt::format("NOT SENT (this server validates telemetry revision {}, a timing_result of this mod needs {})", cs.telemetryRevision, telemetry::kControlsRevision);
     }
     else {
         telemetry::Event ev;
@@ -372,6 +373,15 @@ bool onTimingResult(clone::TimingResultOut const& out) {
     }
     int v = e.config().verbosity;
     if (v >= 1) log::info("GPRL timing: {} -> {}", out.line, sent);
+    // v0.15.0 (docs/SHIP_SOLVER.md §11.7): this result completed a Ship control - its card, and the
+    // explicit fields of both inputs (debug log)
+    if (v >= 1) {
+        for (auto const& line : out.card) log::info("GPRL control: {}", line);
+    }
+    if (v >= 2 && !out.card.empty()) {
+        log::info("GPRL control fields: press: {}", out.cardFields[0]);
+        log::info("GPRL control fields: release: {}", out.cardFields[1]);
+    }
     {
         // v0.7.1: the server gate's rules the mod can check itself (containment on pass AND reported
         // edges - Fable D1, proof consistency - D3b, engine vs tracker sub-tick - D11); a refusal is
@@ -395,8 +405,14 @@ bool onTimingResult(clone::TimingResultOut const& out) {
     }
     // HUD: the input's history line gains "local 4.00 f / seq 10.75 f ok" (or the status word)
     std::string v2;
-    if (std::isfinite(out.localWidthMs)) v2 = "local " + solver::units::framesText(out.localWidthMs);
-    if (std::isfinite(out.seqWidthMs)) v2 += (v2.empty() ? "" : " / ") + std::string("seq ") + solver::units::framesText(out.seqWidthMs);
+    if (p.control) {
+        // v0.15.0: a Ship input - the line's figure is the frozen window, this is the compensated one
+        v2 = solver::control::hudText(solver::control::cardInput(p));
+    }
+    else {
+        if (std::isfinite(out.localWidthMs)) v2 = "local " + solver::units::framesText(out.localWidthMs);
+        if (std::isfinite(out.seqWidthMs)) v2 += (v2.empty() ? "" : " / ") + std::string("seq ") + solver::units::framesText(out.seqWidthMs);
+    }
     v2 += (v2.empty() ? "" : " ") + p.status;
     for (auto& [w, at] : s_recent) {
         (void)at;
@@ -671,6 +687,12 @@ void onLevelComplete(PlayLayer* pl) {
     auto& e = CloneEngine::get();
     if (!e.active() || e.layer() != pl) return;
     e.onLevelComplete();
+}
+
+void onLevelEndAnimation(PlayLayer* pl) {
+    auto& e = CloneEngine::get();
+    if (!e.active() || e.offForVisit() || e.layer() != pl) return;
+    e.noteLevelEnd();
 }
 
 void frameEnd(PlayLayer* pl, float dt) {

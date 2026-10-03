@@ -39,7 +39,10 @@ void LiveRecalcSchedule::windowsSent(int64_t count) {
 }
 
 bool LiveRecalcSchedule::due(int64_t nowMs, LiveRecalcGate const& gate) const {
-    if (!gate.enabled || !gate.sessionOpen || !gate.remote || !gate.levelCounts) return false;
+    // `gate.levelCounts` is NOT a condition: every level feeds the calibration since 2026-10-01
+    // (docs/RATING.md §11). While it still was one, a session on a level that is not on the
+    // levels list never asked, and the calibration only moved when the session ended.
+    if (!gate.enabled || !gate.sessionOpen || !gate.remote) return false;
     if (!m_session || m_queued || m_pendingWindows <= 0) return false;
     return nowMs >= m_nextAttemptMs;
 }

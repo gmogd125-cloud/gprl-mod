@@ -27,6 +27,9 @@ inline bool cloneOrSim(PlayerObject* p) { return sim() || gprl::solver::oracle::
 class $modify(GPRLClonePlayLayer, PlayLayer) {
     void playEndAnimationToPos(CCPoint pos) {
         if (sim()) return;
+        // v0.15.0: from here on the game moves the real player, not physics: the run ends at this
+        // step (the engine finalises its open measurements at the next step boundary)
+        gprl::solver::oracle::onLevelEndAnimation(this);
         PlayLayer::playEndAnimationToPos(pos);
     }
 

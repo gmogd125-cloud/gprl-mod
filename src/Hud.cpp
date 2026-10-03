@@ -263,6 +263,7 @@ std::vector<display::HistoryLine> historyLines() {
         e.boundedLate = w.boundedLate;
         e.reason = w.reason;
         e.suffix = w.v2;   // v0.7.0: "local 4.00 f / seq 10.75 f ok" once the input's timing_result arrived
+        e.frozen = w.frozen;   // v0.15.0: a Ship line says its figure is the frozen (local) window
         entries.push_back(std::move(e));
     }
     return display::historyLines(entries);

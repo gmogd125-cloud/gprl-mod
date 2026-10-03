@@ -1607,6 +1607,36 @@ Flying modes (ship, ufo, wave, swing) settle 0.75 s after the last moved input i
 - Home screen while calibrating: the "What to play next" card starts with the server's note about
   the last session (orange) when that session gave nothing.
 
+## v0.15.0 (Ship controls: frozen vs compensated windows, re-join, phase; docs/SHIP_SOLVER.md §11)
+
+In-game check, on a level with a Ship section that runs to the level end (the owner's reference:
+SUPERHATEMEWORLD from the 93 % StartPos; play it through to the end screen):
+
+- The ready line names `solver gprl-clone/7, sa gprl-clone-sa/6`; the session must say `telemetry
+  revision 7` (else every `GPRL timing:` line reads `NOT SENT (... needs 7)`: deploy the Worker first).
+- At the end of the level: `GPRL solver: level end at step N ... the run ends here; A local job(s),
+  B compensation job(s) are finalised at the next step`. The inputs of the last second must now
+  have `GPRL timing:` lines with windows. Must NOT appear for them: `state_replay_failed
+  (control_mismatch, shadow_mismatch_nearby)`, `sa_control_mismatch`, and the summary's `shadow
+  .../... mismatches` must not jump by ~240 at the end.
+- Every Ship hold prints one card when both its results exist:
+  `GPRL control: SHIP CONTROL #N` / `PRESS local X f | compensated Y f` / `RELEASE ...` /
+  `HOLD original A f | valid B - C f` / `PHASE early D f | late E f` / `SEQUENCE cluster #K |
+  members M | effective .. | rejoined yes (exact|approx|parallel|level_end) | confidence ..%`.
+  `compensated >= Y f (not decided: sa_not_measured_budget)` is honest: the search ran out;
+  `(not decided: sa_survives_no_rejoin)` = the adjusted copies survived but never came back.
+- HUD: a Ship line reads `PRESS frozen 4.17 ms [...] | compensated 15.0 f ok`.
+- A replay that left the real run: `GPRL parity: input #k (job j): the replay left the real run at
+  tick T: <field> real .. replay .. delta ..`. One or two on a level = report the level and the
+  field; many = something moves that the clones do not reproduce.
+- The 5 s summary: `compensation (ship): jobs N + P phase (.. open), trials T (.. per job; ...),
+  re-join exact a / approx b / parallel c / level end d / none e, ...`. `none` are survivors that
+  did not re-join (never counted as passes). `mismatch` must stay 0 or near it.
+- `sim .. ms/frame` stays under ~4 ms in Ship sections; the phase searches add jobs.
+- Must NOT appear: `[fallback:`, `payload_invalid`, `LIVE_STATE_MUTATION_DETECTED`.
+- For the comparison with the human counts: send the log of one completion; the cards of the
+  last controls are the automatic figures for that corridor.
+
 ## v0.14.0 (Ship: lockstep compensation; docs/SHIP_SOLVER.md)
 
 The connected-control inputs (ship) get their sequence-adjusted window from the lockstep

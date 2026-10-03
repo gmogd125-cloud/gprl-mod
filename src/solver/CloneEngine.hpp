@@ -37,13 +37,16 @@
 #include "../../core/solver/budget.hpp"
 #include "../../core/solver/cluster.hpp"
 #include "../../core/solver/compensation.hpp"
+#include "../../core/solver/control_card.hpp"
 #include "../../core/solver/dual_rules.hpp"
 #include "../../core/solver/isolation_guard.hpp"
 #include "../../core/solver/live_state.hpp"
+#include "../../core/solver/parity.hpp"
 #include "../../core/solver/pass_planner.hpp"
 #include "../../core/solver/result_ledger.hpp"
 #include "../../core/solver/sequence.hpp"
 #include "../../core/solver/sequence_adjusted.hpp"
+#include "../../core/solver/ship_control.hpp"
 #include "../../core/solver/timing_result_event.hpp"
 #include "../../core/solver/timing_status.hpp"
 #include "../../core/solver/trace.hpp"
@@ -78,6 +81,7 @@ struct CompensationConfig {
     bool swing = false;
     int maxJobs = 24;                // compensation jobs WITH trials alive at once (more: sa_not_measured_budget); = the local job cap
     int parallelClones = 6;          // trials of one job running at once
+    bool phase = true;               // v0.15.0 (docs/SHIP_SOLVER.md §11.3): the PHASE search of every complete control (on its release)
 };
 
 struct EngineConfig {
@@ -221,6 +225,7 @@ struct Job {
     // lockstep compensation planner's (CompJob), never the delayed replay's
     bool connected = false;
     bool compCreated = false;        // a CompJob was created (or refused by the job cap) for this job
+    solver::parity::Record parity;   // v0.15.0: the first divergence of this job's control from the real run
 };
 
 /// A real / would-be death of player 1 this attempt (v0.7.1: with its x for the object -1 match, Fable D6).
@@ -298,6 +303,12 @@ struct TimingResultOut {
     std::string line;                // the `GPRL timing:` line without the prefix
     double localWidthMs = solver::kNaN;
     double seqWidthMs = solver::kNaN;
+    // v0.15.0 (docs/SHIP_SOLVER.md §11.7): a connected-control (Ship) input; `card` = the lines of
+    // its control's card when this result completed it (press + release both reported), with the
+    // explicit fields of the press and of the release
+    bool connected = false;
+    std::vector<std::string> card;
+    std::string cardFields[2];
 };
 
 /// Every counter the 5 s summary and the Session tab print (docs/SOLVER_DESIGN.md §8, §12).
@@ -503,6 +514,7 @@ struct CompTrialRun {
     double shift = 0.0;
     std::vector<double> offsets;
     size_t logChecked = 0;           // m_log size at the last crossing check (F2)
+    solver::rejoin::Tracker rejoin;  // v0.15.0 (core/solver/rejoin.hpp): fed after every moved input was applied
 };
 
 /// The compensation job of one connected-control local job (same lifetime as its ledger entry).
@@ -526,6 +538,11 @@ struct CompJob {
     double lookAheadMax = 0.0;
     std::string fail;                // why the job was dropped (control mismatch, expired)
     std::vector<solver::trace::SATraced> saTraces;   // traced trials (solver-trace-max-ticks)
+    // v0.15.0 (docs/SHIP_SOLVER.md §11.3): a PHASE job measures the whole hold of the control that
+    // ends with the job's release (member = the press, the release moves rigidly with it); its
+    // result goes to ResultEntry::phase, never to the sequence window
+    bool phase = false;
+    solver::parity::Record parity;   // the first divergence of the delayed control
 };
 
 struct CompCounters {
@@ -535,6 +552,10 @@ struct CompCounters {
     int controlMismatch = 0, cutByRestart = 0, discarded = 0;
     int notStartedWide = 0, notStartedBudget = 0;
     int crossed = 0;                 // trials ended because a later input crossed a moved one (F2)
+    // v0.15.0 (controls/1): how the passes re-joined, the trials that survived without re-joining,
+    // the trials alive at the level end, the phase jobs
+    int rejoinExact = 0, rejoinApprox = 0, rejoinParallel = 0, noRejoin = 0, levelEnd = 0;
+    int phaseJobs = 0, phaseDecided = 0;
 };
 
 /// What a finished sequence job hands to the facade (GdOracle builds the event from it).
@@ -637,6 +658,13 @@ struct ResultEntry {
     std::vector<solver::trace::TraceClone> traces;
     std::vector<solver::trace::SATraced> saTraces;   // the SA job's trials of this input (second block)
     bool compDone = false;                       // v0.14.0: the compensation job finished (its result / reason is stored above)
+    // v0.15.0 (docs/SHIP_SOLVER.md §11): the Ship control facts of a connected-control input
+    bool connected = false;                      // measured in a connected-control mode (ship): the result carries its control
+    bool compPending = false;                    // its compensation job is still running
+    bool phasePending = false;                   // its phase job is still running (releases)
+    bool phaseRan = false;
+    solver::SAResult phase;                      // the phase search's result (releases)
+    solver::parity::Record parity;               // the first divergence of a replay that left the real run
 };
 
 class CloneEngine {
@@ -680,6 +708,11 @@ public:
     /// PlayLayer::destroyPlayer of the real player 1 after the original returned.
     void onRealDeath(GameObject* by, bool wouldBe);
     void onLevelComplete();
+    /// v0.15.0: the level's end animation starts (PlayLayer::playEndAnimationToPos for the real
+    /// player): from here on the game moves the player, not physics. Only notes the step; the open
+    /// measurements are finalised at the next step boundary (finishAtLevelEnd).
+    void noteLevelEnd();
+    bool levelEnded() const { return m_levelEnded || m_endPending; }
     void frameEnd(float dt);                   // PlayLayer::postUpdate
     /// The real player 1 touched a portal (fingerprint portalTransition).
     void onRealPortal(int objectId);
@@ -880,6 +913,9 @@ private:
     bool connectedModeOf(PlayerObject* p) const;
     solver::comp::CompConfig compConfigFor() const;
     CompJob* findComp(int jobId);
+    bool phaseConsider(Job& job, ResultEntry& e);
+    void compLevelEnd(int target);
+    void finishAtLevelEnd(int target);
     CompJob* compCreate(Job& job);
     void compNoteInput(InputEvent const& le);
     void compNoteClones(Job& job);
@@ -993,6 +1029,11 @@ private:
     SeqJob m_seq;                                   // the running job (valid while m_seqActive)
     bool m_seqActive = false;
     bool m_seqClosed = false;                       // the level was completed: no further sequence work this attempt
+    // v0.15.0: the level end. m_endPending: the end animation started at m_endStep (noteLevelEnd),
+    // finalisation waits for the next step boundary; m_levelEnded: done, nothing is measured until the restart
+    bool m_endPending = false;
+    bool m_levelEnded = false;
+    int m_endStep = 0;
     Job m_seqCtx;                                   // simStep context of a sequence clone (no single moved input)
     std::unordered_set<uint64_t> m_seqSeen;         // (first input id, size) already queued this attempt
     std::unordered_map<int64_t, int> m_seqPlaces;   // measurements per place on this level visit
@@ -1009,6 +1050,15 @@ private:
     ResultSink m_resultSink;
     solver::ResultLedger<ResultEntry> m_ledger;     // bound jobs of this attempt until their result is emitted
     solver::cluster::ClusterTracker m_clusters;     // connectedNext links of this attempt's inputs
+    // v0.15.0: the timing_results of this attempt's Ship controls until both ends reported (the
+    // debug card, core/solver/control_card.hpp). By control index; at most kMaxControlSlots.
+    struct ControlSlot {
+        std::optional<telemetry::TimingResultPayload> press, release;
+    };
+    std::map<int, ControlSlot> m_controlSlots;
+    static constexpr size_t kMaxControlSlots = 256;
+    void cardNote(TimingResultOut& out);
+    void cardsFlush();
     bool m_saOn = true;
     std::vector<SACandidate> m_saCands;             // inputs whose SA window waits for a delayed-replay job
     int64_t m_saOrder = 0;

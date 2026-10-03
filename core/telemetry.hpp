@@ -85,13 +85,18 @@ constexpr int kEventKindCount = 12;
 ///       `dual_pair`) and the optional `dual` block (geode 0.8.0, docs/LIVE_ISOLATION_DESIGN.md §5.5);
 ///   6 = the lockstep compensation vocabulary (geode 0.14.0, docs/SHIP_SOLVER.md §4): adaptations
 ///       `comp1` / `comp2` / `comp3`, edge proof `compensated`, the optional `compensation` block of
-///       the sequence window.
+///       the sequence window;
+///   7 = the Ship control vocabulary `controls/1` (geode 0.15.0, docs/SHIP_SOLVER.md §11): reason
+///       `sa_survives_no_rejoin`, adaptations `chain_n` / `comp_n`, up to 6 compensation offsets per
+///       side, the optional `control` block (the press + release a result belongs to, its phase
+///       tolerance, how each compensated edge re-joined) and the optional `parity` block (the first
+///       divergence of a replay that left the real run).
 /// A server tells the mod its revision in V1CreateSessionResponse.telemetryRevision (absent = 1);
 /// the mod never sends an event kind of a newer revision than the server's, because a validator
 /// that does not know the kind rejects the WHOLE batch. The same holds for a status / reason a
 /// validator does not know: from geode 0.8.0 the mod pushes `timing_result` only to servers that
 /// validate `kIsolationRevision` or later (else the `GPRL timing:` line says `NOT SENT`).
-constexpr int kTelemetryRevision = 6;
+constexpr int kTelemetryRevision = 7;
 constexpr int kClipAvailableRevision = 2;
 constexpr int kSequenceWindowRevision = 3;
 constexpr int kTimingResultRevision = 4;   // the revision the KIND arrived with (schema.ts TIMING_RESULT_REVISION)
@@ -101,6 +106,9 @@ constexpr int kIsolationRevision = 5;
 /// schema.ts COMPENSATION_REVISION: the revision a `timing_result` built by geode >= 0.14.0 needs
 /// (its `comp*` adaptations, `compensated` proof and `compensation` block). The send gate uses it.
 constexpr int kCompensationRevision = 6;
+/// schema.ts CONTROLS_REVISION: the revision a `timing_result` built by geode >= 0.15.0 needs (the
+/// `controls/1` vocabulary and blocks above). The send gate uses it.
+constexpr int kControlsRevision = 7;
 /// schema.ts TIMING_RESULT_LIMITS
 constexpr size_t kMaxStatusReasons = 12;
 constexpr double kTimingEdgeToleranceMs = 1e-6;
@@ -379,6 +387,62 @@ struct TimingResultDualPayload {
     bool operator==(TimingResultDualPayload const&) const = default;
 };
 
+/// schema.ts TimingPhase (v0.15.0, revision 7, docs/SHIP_SOLVER.md §11.3): how far the WHOLE hold
+/// (press and release by the same amount, its duration kept) can shift with the following inputs
+/// allowed to compensate. Signed ms relative to the recorded hold; the edge convention of a window
+/// (the midpoint of the pass / fail bracket on a side that ended at a fail, else the last pass).
+struct TimingPhasePayload {
+    double earlyMs = 0.0;              // <= 0
+    double lateMs = 0.0;               // >= 0
+    std::string earlyStop = "range";   // TIMING_EDGE_STOPS
+    std::string lateStop = "range";
+    bool decided = false;              // neither side undecided / untested
+    int64_t trials = 0;
+
+    bool operator==(TimingPhasePayload const&) const = default;
+};
+
+/// schema.ts TimingRejoin (v0.15.0, revision 7, docs/SHIP_SOLVER.md §11.2): how the compensated
+/// pass that set a sequence edge came back to the recorded run (core/solver/rejoin.hpp).
+struct TimingRejoinPayload {
+    std::string kind = "exact";   // TIMING_REJOIN_KINDS: exact | approx | parallel | level_end
+    double afterMs = 0.0;         // when the re-join began, relative to actualMs
+    double errorY = 0.0;          // largest |dy| over the re-join streak (units), >= 0
+    double errorVy = 0.0;         // largest |dvy| (m_yVelocity units), >= 0
+
+    bool operator==(TimingRejoinPayload const&) const = default;
+};
+
+/// schema.ts TimingControl (v0.15.0, revision 7, docs/SHIP_SOLVER.md §11.3): the Ship CONTROL (one
+/// press and its release) a connected-control result belongs to. The nullable keys are ALWAYS
+/// written. Optional on the wire (absent on other gamemodes and older payloads), never null.
+struct TimingControlPayload {
+    int64_t index = 1;                      // 1-based control number in the attempt
+    std::string role = "press";             // "press" | "release" (= the event's inputKind)
+    std::optional<int64_t> pressSeq;        // the control's press (null: held before the attempt started)
+    std::optional<int64_t> releaseSeq;      // its release (null: not released when the result was built)
+    std::optional<double> holdMs;           // the recorded hold duration (null: an end is unknown)
+    std::optional<TimingPhasePayload> phase;    // release results whose phase search ran, else null
+    int64_t followers = 0;                  // the most followers a pass of the sequence window moved (0..6)
+    std::optional<TimingRejoinPayload> rejoinEarly;   // null: that edge was not set by a compensated pass
+    std::optional<TimingRejoinPayload> rejoinLate;
+
+    bool operator==(TimingControlPayload const&) const = default;
+};
+
+/// schema.ts TimingParity (v0.15.0, revision 7, docs/SHIP_SOLVER.md §11.1): the FIRST divergence of
+/// a replay of the recorded inputs from the real run (core/solver/parity.hpp). Present only on a
+/// result whose replay was not exact (`stateReplayValid` false); never null.
+struct TimingParityPayload {
+    double tick = 0.0;            // 240 Hz ticks since the attempt start (>= 0)
+    std::string field;            // TIMING_PARITY_FIELDS (the first field that differed)
+    double real = 0.0;            // the real player's value (flags 0 / 1)
+    double replay = 0.0;          // the replayed copy's value
+    double delta = 0.0;           // replay - real
+
+    bool operator==(TimingParityPayload const&) const = default;
+};
+
 /// schema.ts TimingResultEvent (v0.7.0, telemetry revision 4, docs/TIMING_SOLVER_V2.md §4.1):
 /// the final word on one measured input - status + reasons, the LOCAL window, the
 /// SEQUENCE-ADJUSTED window, the PAIR window, the HOLD range, the canonical position and the
@@ -414,6 +478,11 @@ struct TimingResultPayload {
     // facts of a dual PAIR result; required when statusReasons contains `dual_pair`. Written LAST
     // (after solverVersion) so every older payload stays byte-identical.
     std::optional<TimingResultDualPayload> dual;
+    // v0.15.0 OPTIONAL (telemetry revision 7, never null, absent in older payloads): the Ship control
+    // of a connected-control result and the first divergence of a replay that was not exact.
+    // Written after `dual`, in this order.
+    std::optional<TimingControlPayload> control;
+    std::optional<TimingParityPayload> parity;
 
     bool operator==(TimingResultPayload const&) const = default;
 };

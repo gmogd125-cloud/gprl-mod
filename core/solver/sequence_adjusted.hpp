@@ -56,11 +56,12 @@
 #include "boundary_search.hpp"
 #include "local_window.hpp"
 #include "pass_planner.hpp"
+#include "rejoin.hpp"
 #include "timing_status.hpp"
 
 namespace gprl::solver {
 
-constexpr char const* kSASolverVersion = "gprl-clone-sa/5";   // v0.14.6: flying trials settle after 0.75 s, 64 compensation trials per input; /4 = v0.14.0: every sequence window of this build (the lockstep compensation planner for connected-control modes, core/solver/compensation.hpp, and the delayed replay for the rest); /3 = v0.11.0 settled look-ahead; /2 = v0.8.0 isolated simulator
+constexpr char const* kSASolverVersion = "gprl-clone-sa/6";   // v0.15.0 (controls/1, docs/SHIP_SOLVER.md §11): a compensated pass must RE-JOIN the recorded run, up to 5 followers by causal evidence, warm starts + a cached response model, range + 6 ticks, the level end is a pass; /5 = v0.14.6: flying trials settle after 0.75 s, 64 compensation trials per input; /4 = v0.14.0: every sequence window of this build (the lockstep compensation planner for connected-control modes, core/solver/compensation.hpp, and the delayed replay for the rest); /3 = v0.11.0 settled look-ahead; /2 = v0.8.0 isolated simulator
 
 /// Every threshold of the SA solver in ONE versioned object (DEV DEFAULTS; the ready line names
 /// the version). `horizonSeconds` / `maxShiftTicks` are the engine's settings at job time.
@@ -133,7 +134,10 @@ constexpr char const* name(SAProof p) {
 /// v0.14.0 (docs/SHIP_SOLVER.md §4.1): Comp1..Comp3 = k followers moved by INDEPENDENT offsets
 /// (the lockstep compensation planner, core/solver/compensation.hpp); Pair / Chain2 / Chain3 keep
 /// their meaning (every follower by the member's shift).
-enum class SAAdaptation : uint8_t { Local = 0, Pair = 1, Chain2 = 2, Chain3 = 3, Comp1 = 4, Comp2 = 5, Comp3 = 6 };
+/// v0.15.0 (controls/1): ChainN / CompN = four or more followers (the count is the length of the
+/// edge's follower offsets; the lockstep planner's cap is comp::kMaxFollowers).
+enum class SAAdaptation : uint8_t { Local = 0, Pair = 1, Chain2 = 2, Chain3 = 3, Comp1 = 4, Comp2 = 5, Comp3 = 6, ChainN = 7, CompN = 8 };
+constexpr int kSAAdaptationCount = 9;
 constexpr char const* name(SAAdaptation a) {
     switch (a) {
         case SAAdaptation::Local: return "local";
@@ -143,13 +147,15 @@ constexpr char const* name(SAAdaptation a) {
         case SAAdaptation::Comp1: return "comp1";
         case SAAdaptation::Comp2: return "comp2";
         case SAAdaptation::Comp3: return "comp3";
+        case SAAdaptation::ChainN: return "chain_n";
+        case SAAdaptation::CompN: return "comp_n";
     }
     return "local";
 }
 /// The uniform adaptation of k moved followers (1..3), and the compensated one.
-constexpr SAAdaptation uniformAdaptation(int k) { return k <= 1 ? SAAdaptation::Pair : k == 2 ? SAAdaptation::Chain2 : SAAdaptation::Chain3; }
-constexpr SAAdaptation compensatedAdaptation(int k) { return k <= 1 ? SAAdaptation::Comp1 : k == 2 ? SAAdaptation::Comp2 : SAAdaptation::Comp3; }
-constexpr bool isCompensated(SAAdaptation a) { return a == SAAdaptation::Comp1 || a == SAAdaptation::Comp2 || a == SAAdaptation::Comp3; }
+constexpr SAAdaptation uniformAdaptation(int k) { return k <= 1 ? SAAdaptation::Pair : k == 2 ? SAAdaptation::Chain2 : k == 3 ? SAAdaptation::Chain3 : SAAdaptation::ChainN; }
+constexpr SAAdaptation compensatedAdaptation(int k) { return k <= 1 ? SAAdaptation::Comp1 : k == 2 ? SAAdaptation::Comp2 : k == 3 ? SAAdaptation::Comp3 : SAAdaptation::CompN; }
+constexpr bool isCompensated(SAAdaptation a) { return a == SAAdaptation::Comp1 || a == SAAdaptation::Comp2 || a == SAAdaptation::Comp3 || a == SAAdaptation::CompN; }
 
 /// One logged input of the job's span (the attempt's input log, time order).
 struct SAContextInput {
@@ -235,6 +241,13 @@ struct SAEdge {
     // v0.14.0 (docs/SHIP_SOLVER.md §4.1): the follower offsets (frames, relative to each follower's
     // recorded frame) of the pass that set this edge's last pass; empty when that pass was local
     std::vector<double> followerOffsetsFrames;
+    // v0.15.0 (controls/1, docs/SHIP_SOLVER.md §11.2): how the pass that set this edge's last pass
+    // re-joined the recorded run (None = a local pass / no compensated pass set the edge), the
+    // frame of the re-join relative to the member's recorded frame and its largest deviation
+    rejoin::Kind rejoin = rejoin::Kind::None;
+    double rejoinAfterFrames = kNaN;
+    double rejoinErrY = kNaN;
+    double rejoinErrVy = kNaN;
 
     bool bounded() const { return stop == EdgeStop::Fail && !std::isnan(failFrames); }
     /// A [pass, fail] bracket the reported edge is the midpoint of: an SA fail, or the inherited local one.
@@ -263,6 +276,10 @@ struct SAResult {
     bool isolated = false;                    // no later input inside the look-ahead: W_SA = W_local
     bool openRange = false;                   // Fable D3a: both local sides open to the search limit: W_SA = W_local, decided
     bool survivedOnly = false;                // Fable D3b: a side widened on survived-only passes (proof `survived`)
+    // v0.15.0 (controls/1): a side whose walk ended on a shift that SURVIVED without re-joining
+    // (`sa_survives_no_rejoin`); the most followers a pass moved (the member's causal span)
+    bool survivedNoRejoin[2] = {false, false};
+    int followersUsed = 0;
     std::vector<std::string> debug;
 };
 
