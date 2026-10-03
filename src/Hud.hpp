@@ -38,12 +38,15 @@ void showTrace(solver::trace_view::View view);
 /// the popup's Session tab.
 solver::trace_view::View const& lastTrace();
 
-/// v0.14.5: every GPRL notification, top right in the verification notice's panel (owner
-/// 2026-10-03): a pulsing blue "i" for information, the red "!" for warnings. On Geode's overlay
-/// (survives scene changes); several stack downward under the sigma/s panel. Main thread only.
-enum class ToastKind { Info, Warning };
+/// Every GPRL notification (owner 2026-10-03), top right on Geode's overlay (survives scene
+/// changes); several stack downward under the sigma/s panel. One look (v0.14.11): a rim in the
+/// kind's colour around a dark rounded panel, GD's own icon, a gold "GPRL" caption, the message
+/// wrapped under it. Info = blue "i" circle, Success = green tick, Warning = yellow triangle,
+/// Error = red cross, Alert = the red "!" of the verification notice. Main thread only.
+enum class ToastKind { Info, Warning, Success, Error, Alert };
 void notify(std::string const& text, ToastKind kind = ToastKind::Info, float seconds = 5.f);
-/// Geode's NotificationIcon as a ToastKind (Warning / Error -> "!", everything else -> "i").
+/// Geode's NotificationIcon as a ToastKind (Success, Warning and Error keep their meaning,
+/// everything else is Info).
 ToastKind toastKindOf(geode::NotificationIcon icon);
 
 /// v0.9.0 (owner decision 2026-10-01): the top-right "!" notification (level, end screen or menu;
@@ -52,8 +55,9 @@ ToastKind toastKindOf(geode::NotificationIcon icon);
 void verificationToast(std::string const& text, float seconds = 8.f);
 
 /// Level families (docs/LEVEL_FAMILY_DESIGN.md FA-D11): the server's "RELATED GAMEPLAY DETECTED"
-/// lines as a small top-LEFT panel for `seconds`. Its own node id ("family-notice"), so it never
-/// replaces the verification toast; no pulsing "!". Main thread only; does nothing without lines.
+/// lines as the same panel at the top LEFT for `seconds` (a short first line is its caption). Its
+/// own node id ("family-notice"), so it never replaces the verification toast. Main thread only;
+/// does nothing without lines.
 void familyNotice(std::vector<std::string> lines, float seconds = 6.f);
 
 }  // namespace gprl::hud

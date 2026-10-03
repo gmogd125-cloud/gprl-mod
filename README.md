@@ -1524,6 +1524,39 @@ was left lets a later MenuLayer try again).
 8. When a job finishes: `analysis done - ...` then `analysis of level <id> sent - stored yes ...`
    (or `not sent: the server does not know this level version yet` before the session existed).
 
+## v0.14.11 (notifications: one look for all of them)
+
+Owner 2026-10-03, with a screenshot of the update notice: "make all notifications look better"
+(the v0.14.5 panel drew bigFont's lowercase "i" as its icon, which reads as a blue blob, on a
+panel that took more than half the screen's width). `src/Hud.cpp`, the block at its end;
+placement and behaviour are v0.14.5's (top right on Geode's overlay, stacking under the sigma/s
+panel, the keyed verification notice replacing its older copy, the level-family notice top left
+on the running scene, one log line each).
+
+- **Panel**: a one-point rim in the kind's colour around a dark rounded panel (`ui::roundRect`,
+  fill 14 / 18 / 34), 8 x 6 points of padding, at most 220 points of text: about 32 points high
+  for a one-line message.
+- **Icon** (16 points, GD's own sprites, checked with `spriteFrameByName` first):
+  `ToastKind::Info` the blue "i" circle `GJ_infoIcon_001.png`; `Success` the green tick
+  `GJ_completesIcon_001.png`; `Warning` Geode's yellow triangle `geode.loader/info-warning.png`
+  (else `exMark_001.png`); `Alert` (the verification notice) the red "!" `exMark_001.png`;
+  `Error` the red cross `GJ_deleteIcon_001.png`. A letter in the accent colour only when no
+  sprite is loaded.
+- **Text**: a gold `GPRL` caption (goldFont 0.32) and the message under it in chatFont 0.5
+  (9 px), word-wrapped by `wrapLines` (measured with a probe label), at most 5 lines. A leading
+  `GPRL: ` is dropped from the message and its first letter capitalised (`GPRL: code copied` ->
+  `Code copied`); a leading `GPRL ` is dropped (`GPRL v0.14.11 downloaded ...` -> `v0.14.11
+  downloaded ...`). The family notice uses a short first line (`RELATED GAMEPLAY DETECTED`) as
+  its caption.
+- **Motion**: slides in 24 points from the screen edge while fading in (0.2 s), stays
+  `seconds`, fades out while sliding back (0.35 s). No pulsing icon. The panel is a
+  `CCNodeRGBA` with cascading opacity, so one fade covers the rim, the panel, the icon and the
+  lines.
+- **API** (`Hud.hpp`): `enum class ToastKind { Info, Warning, Success, Error, Alert }` (Info and
+  Warning as before); `notify(text, kind = Info, seconds = 5)`, `verificationToast`,
+  `familyNotice` unchanged; `toastKindOf(NotificationIcon)` now keeps Success and Error. The
+  menu's "code copied" is a Success notice.
+
 ## v0.14.9 (deaths and would-be deaths: `noclip-death-detector/2`)
 
 `docs/NOCLIP_DEATH_DETECTOR.md` is the design, the evidence and the old-data table.

@@ -338,7 +338,7 @@ void GprlMenu::onWebsiteCode(CCObject*) {
 }
 
 void GprlMenu::onCopyCode(CCObject*) {
-    if (connect::copyWebsiteCode()) hud::notify("GPRL: code copied");
+    if (connect::copyWebsiteCode()) hud::notify("GPRL: code copied", hud::ToastKind::Success);
 }
 
 void GprlMenu::onHideCode(CCObject*) {

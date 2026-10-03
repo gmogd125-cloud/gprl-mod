@@ -3,6 +3,7 @@
 #include <Geode/ui/OverlayManager.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 #include "../core/display.hpp"
@@ -12,6 +13,7 @@
 #include "Telemetry.hpp"
 #include "Tracker.hpp"
 #include "analyzer/Status.hpp"
+#include "ui/Widgets.hpp"
 #include "solver/GdOracle.hpp"
 
 using namespace geode::prelude;
@@ -604,23 +606,198 @@ void tick(float dt) {
     refresh();   // no-op without the line (show-hud off); the reset-generation check inside still runs
 }
 
-// ---- top-right notifications (v0.14.5, owner 2026-10-03: "make it so the notification pops up
-// like the video notification in the top right and instead of a ! make it a i ... any other
-// notifications will come through there") ----
-// One look for every GPRL notification: the dark panel of the verification notice, top right,
-// with a pulsing icon - a blue "i" for information, the red "!" for warnings and verification.
-// On Geode's overlay layer, so a notification survives a scene change (menu <-> level) like
-// Geode's own; several stack downward under the sigma/s panel instead of covering each other.
+// ---- notifications (v0.14.5 placement, v0.14.11 look) ----
+// Owner 2026-10-03: every GPRL notification pops up top right like the verification notice
+// ("any other notifications will come through there"), and then: "make all notifications look
+// better" (the first version drew bigFont's lowercase "i" as the icon: a blue blob on a very
+// large panel). One look for all of them now:
+//
+//   a thin rim in the kind's colour around a dark rounded panel, GD's own icon on the left
+//   (the blue info circle, the green tick, Geode's yellow warning triangle, the red "!" for the
+//   verification notice, the red cross for errors), a small gold "GPRL" caption and the message
+//   under it in 9 px chatFont, wrapped at 220 points (at most 5 lines).
+//
+// It slides in from the screen edge, stays `seconds`, then fades out. Top-right notifications
+// live on Geode's overlay layer, so they survive a scene change (menu <-> level) like Geode's
+// own; several stack downward under the sigma/s panel instead of covering each other. The
+// level-family notice is the same panel at the top LEFT of the running scene.
 
 namespace {
 
 constexpr int kToastTag = 0x6A7051;   // every GPRL top-right notification on the overlay
 constexpr float kToastGap = 4.f;
+constexpr float kToastMargin = 6.f;
+constexpr float kToastPadX = 8.f;
+constexpr float kToastPadY = 6.f;
+constexpr float kToastIcon = 16.f;
+constexpr float kToastIconGap = 7.f;
+constexpr float kToastTextScale = 0.5f;       // chatFont: 9 px
+constexpr float kToastCaptionScale = 0.32f;   // goldFont: 9 px
+constexpr float kToastTextWidth = 220.f;
+constexpr float kToastLineGap = 2.f;
+constexpr size_t kToastMaxLines = 5;
+constexpr float kToastSlide = 24.f;
+constexpr ccColor3B kToastFill{14, 18, 34};
+
+struct ToastLook {
+    char const* frame;      // sheet frame of the icon
+    char const* fallback;   // second choice when the first is not loaded
+    char const* glyph;      // last resort: a letter in the accent colour
+    ccColor3B accent;       // the rim's colour
+    char const* name;       // for the log line
+};
+
+ToastLook lookOf(ToastKind kind) {
+    switch (kind) {
+        case ToastKind::Success: return {"GJ_completesIcon_001.png", nullptr, "+", {120, 232, 140}, "ok"};
+        case ToastKind::Warning: return {"geode.loader/info-warning.png", "exMark_001.png", "!", {255, 205, 90}, "warning"};
+        case ToastKind::Error: return {"GJ_deleteIcon_001.png", "exMark_001.png", "x", {255, 110, 90}, "error"};
+        case ToastKind::Alert: return {"exMark_001.png", nullptr, "!", {255, 90, 90}, "!"};
+        case ToastKind::Info: break;
+    }
+    return {"GJ_infoIcon_001.png", nullptr, "i", {90, 190, 255}, "i"};
+}
+
+CCNode* toastIcon(ToastLook const& look) {
+    CCSprite* s = ui::frameSprite(look.frame);
+    if (!s && look.fallback) s = ui::frameSprite(look.fallback);
+    if (s) {
+        float big = std::max(s->getContentSize().width, s->getContentSize().height);
+        if (big > 0.f) s->setScale(kToastIcon / big);
+        return s;
+    }
+    auto* l = CCLabelBMFont::create(look.glyph, "bigFont.fnt");
+    l->setScale(0.45f);
+    l->setColor(look.accent);
+    return l;
+}
+
+/// Greedy word wrap of `text` (its own line breaks kept) for a bitmap font at `scale`.
+std::vector<std::string> wrapLines(std::string const& text, char const* font, float scale, float maxWidth) {
+    std::vector<std::string> lines;
+    auto* probe = CCLabelBMFont::create("", font);
+    auto widthOf = [&](std::string const& s) {
+        probe->setString(s.c_str());
+        return probe->getContentSize().width * scale;
+    };
+    size_t start = 0;
+    while (start <= text.size()) {
+        size_t nl = text.find('\n', start);
+        std::string para = text.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+        std::string cur;
+        size_t i = 0;
+        while (i < para.size()) {
+            size_t sp = para.find(' ', i);
+            std::string word = para.substr(i, sp == std::string::npos ? std::string::npos : sp - i);
+            i = sp == std::string::npos ? para.size() : sp + 1;
+            if (word.empty()) continue;
+            std::string trial = cur.empty() ? word : cur + " " + word;
+            if (cur.empty() || widthOf(trial) <= maxWidth) cur = trial;
+            else {
+                lines.push_back(cur);
+                cur = word;
+            }
+        }
+        if (!cur.empty() || lines.empty()) lines.push_back(cur);
+        if (nl == std::string::npos) break;
+        start = nl + 1;
+    }
+    return lines;
+}
+
+/// "GPRL: code copied" -> caption "GPRL", message "Code copied"; "GPRL v0.14.7 downloaded ..." ->
+/// "GPRL" + "v0.14.7 downloaded ..."; anything else keeps its text under the "GPRL" caption.
+std::pair<std::string, std::string> splitCaption(std::string const& text) {
+    std::string message = text;
+    if (text.rfind("GPRL: ", 0) == 0) {
+        message = text.substr(6);
+        if (!message.empty()) message[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(message[0])));
+    }
+    else if (text.rfind("GPRL ", 0) == 0) message = text.substr(5);
+    return {"GPRL", message};
+}
+
+/// One notification panel (anchor (0, 0), content size = its size). A CCNodeRGBA with cascading
+/// opacity, so one fade action fades the rim, the panel, the icon and every text line together.
+CCNodeRGBA* buildToast(std::string const& caption, std::string const& message, ToastKind kind) {
+    ToastLook const look = lookOf(kind);
+    auto* node = CCNodeRGBA::create();
+    node->setCascadeOpacityEnabled(true);
+
+    std::vector<std::string> lines = wrapLines(message, "chatFont.fnt", kToastTextScale, kToastTextWidth);
+    if (lines.size() > kToastMaxLines) {
+        lines.resize(kToastMaxLines);
+        lines.back() += "...";
+    }
+    float textW = 0.f;
+    CCLabelBMFont* cap = nullptr;
+    float capH = 0.f;
+    if (!caption.empty()) {
+        cap = CCLabelBMFont::create(caption.c_str(), "goldFont.fnt");
+        cap->setScale(kToastCaptionScale);
+        cap->limitLabelWidth(kToastTextWidth, kToastCaptionScale, kToastCaptionScale * 0.6f);
+        capH = cap->getScaledContentSize().height;
+        textW = cap->getScaledContentSize().width;
+    }
+    std::vector<CCLabelBMFont*> labels;
+    float lineH = 0.f;
+    for (auto const& line : lines) {
+        auto* l = CCLabelBMFont::create(line.c_str(), "chatFont.fnt");
+        l->setScale(kToastTextScale);
+        // a single word wider than the panel (a link) shrinks instead of running out of it
+        l->limitLabelWidth(kToastTextWidth, kToastTextScale, kToastTextScale * 0.6f);
+        lineH = std::max(lineH, l->getContentSize().height * kToastTextScale);
+        textW = std::max(textW, l->getScaledContentSize().width);
+        labels.push_back(l);
+    }
+    float const n = static_cast<float>(labels.size());
+    float const textH = (cap ? capH + kToastLineGap : 0.f) + n * lineH + std::max(0.f, n - 1.f) * kToastLineGap;
+    float const w = kToastPadX + kToastIcon + kToastIconGap + textW + kToastPadX;
+    float const h = std::max(kToastIcon, textH) + 2.f * kToastPadY;
+    node->setContentSize({w, h});
+
+    // the rim is the same rounded panel in the accent colour, one point larger all round
+    node->addChild(ui::roundRect(w, h, look.accent, 255), 0);
+    auto* fill = ui::roundRect(w - 2.f, h - 2.f, kToastFill, 255);
+    fill->setPosition({1.f, 1.f});
+    node->addChild(fill, 1);
+
+    auto* icon = toastIcon(look);
+    icon->setPosition({kToastPadX + kToastIcon * 0.5f, h * 0.5f});
+    node->addChild(icon, 2);
+
+    float const tx = kToastPadX + kToastIcon + kToastIconGap;
+    float top = h - (h - textH) * 0.5f;
+    if (cap) {
+        cap->setAnchorPoint({0.f, 0.5f});
+        cap->setPosition({tx, top - capH * 0.5f});
+        node->addChild(cap, 2);
+        top -= capH + kToastLineGap;
+    }
+    for (auto* l : labels) {
+        l->setAnchorPoint({0.f, 0.5f});
+        l->setPosition({tx, top - lineH * 0.5f});
+        node->addChild(l, 2);
+        top -= lineH + kToastLineGap;
+    }
+    return node;
+}
+
+/// Slides the panel in by `dx` (it must already sit `dx` away from its place), keeps it
+/// `seconds`, fades it out while it slides back, removes it.
+void animateToast(CCNodeRGBA* toast, float dx, float seconds) {
+    toast->setOpacity(0);
+    toast->runAction(CCSequence::create(
+        CCSpawn::create(CCFadeIn::create(0.18f), CCEaseOut::create(CCMoveBy::create(0.22f, {dx, 0.f}), 2.f), nullptr),
+        CCDelayTime::create(std::max(1.f, seconds)),
+        CCSpawn::create(CCFadeOut::create(0.35f), CCEaseIn::create(CCMoveBy::create(0.35f, {-dx, 0.f}), 2.f), nullptr),
+        CCRemoveSelf::create(), nullptr));
+}
 
 /// The top edge for a new notification: under the sigma/s panel while a level shows it, then
 /// under every GPRL notification still on screen.
 float nextToastTop(CCNode* layer, float winH) {
-    float top = winH - 6.f - (s_topPanel && s_topPanel->getParent() ? s_topPanel->getContentSize().height + 8.f : 0.f);
+    float top = winH - kToastMargin - (s_topPanel && s_topPanel->getParent() ? s_topPanel->getContentSize().height + 8.f : 0.f);
     if (auto* children = layer->getChildren()) {
         for (auto* child : CCArrayExt<CCNode*>(children)) {
             if (!child || child->getTag() != kToastTag) continue;
@@ -641,36 +818,16 @@ void showToast(std::string const& text, ToastKind kind, float seconds, char cons
     if (replaceId) {
         if (auto* old = layer->getChildByID(replaceId)) old->removeFromParent();
     }
-    bool const warn = kind == ToastKind::Warning;
-    auto* icon = CCLabelBMFont::create(warn ? "!" : "i", "bigFont.fnt");
-    icon->setColor(warn ? ccColor3B{255, 70, 70} : ccColor3B{90, 170, 255});
-    icon->setScale(0.85f);
-    auto* label = CCLabelBMFont::create(text.c_str(), "chatFont.fnt", 300.f, kCCTextAlignmentLeft);
-    label->setScale(0.62f);
-    label->setAnchorPoint({0.f, 0.5f});
-    float iconW = std::max(icon->getScaledContentSize().width, 10.f);
-    float iconH = icon->getScaledContentSize().height;
-    float labelW = label->getScaledContentSize().width;
-    float labelH = label->getScaledContentSize().height;
-    float pad = 8.f;
-    float w = pad + iconW + pad + labelW + pad;
-    float h = std::max(iconH, labelH) + 2.f * pad;
-    auto* panel = makePanel({24, 24, 30}, 230, w, h);
-    if (replaceId) panel->setID(replaceId);
-    panel->setTag(kToastTag);
-    panel->ignoreAnchorPointForPosition(false);
-    panel->setAnchorPoint({1.f, 1.f});
-    panel->setPosition({win.width - 6.f, nextToastTop(layer, win.height)});
-    panel->setZOrder(100000);
-    panel->setCascadeOpacityEnabled(true);
-    icon->setPosition({pad + iconW * 0.5f, h * 0.5f});
-    label->setPosition({pad + iconW + pad, h * 0.5f});
-    panel->addChild(icon);
-    panel->addChild(label);
-    icon->runAction(CCRepeatForever::create(CCSequence::create(CCScaleTo::create(0.4f, 1.0f), CCScaleTo::create(0.4f, 0.85f), nullptr)));
-    panel->runAction(CCSequence::create(CCDelayTime::create(std::max(1.f, seconds)), CCFadeOut::create(0.6f), CCRemoveSelf::create(), nullptr));
-    layer->addChild(panel);
-    log::info("GPRL: notice ({}): {}", warn ? "!" : "i", text);
+    auto parts = splitCaption(text);
+    auto* toast = buildToast(parts.first, parts.second, kind);
+    if (replaceId) toast->setID(replaceId);
+    toast->setTag(kToastTag);
+    toast->setAnchorPoint({1.f, 1.f});
+    toast->setPosition({win.width - kToastMargin + kToastSlide, nextToastTop(layer, win.height)});
+    toast->setZOrder(100000);
+    animateToast(toast, -kToastSlide, seconds);
+    layer->addChild(toast);
+    log::info("GPRL: notice ({}): {}", lookOf(kind).name, text);
 }
 
 }  // namespace
@@ -678,11 +835,16 @@ void showToast(std::string const& text, ToastKind kind, float seconds, char cons
 void notify(std::string const& text, ToastKind kind, float seconds) { showToast(text, kind, seconds, nullptr); }
 
 ToastKind toastKindOf(NotificationIcon icon) {
-    return icon == NotificationIcon::Warning || icon == NotificationIcon::Error ? ToastKind::Warning : ToastKind::Info;
+    switch (icon) {
+        case NotificationIcon::Success: return ToastKind::Success;
+        case NotificationIcon::Warning: return ToastKind::Warning;
+        case NotificationIcon::Error: return ToastKind::Error;
+        default: return ToastKind::Info;
+    }
 }
 
 void verificationToast(std::string const& text, float seconds) {
-    showToast(text, ToastKind::Warning, seconds, "verification-toast"_spr);
+    showToast(text, ToastKind::Alert, seconds, "verification-toast"_spr);
 }
 
 void familyNotice(std::vector<std::string> lines, float seconds) {
@@ -693,31 +855,26 @@ void familyNotice(std::vector<std::string> lines, float seconds) {
     auto win = director->getWinSize();
     // one at a time, and never the verification toast's slot
     if (auto* old = scene->getChildByID("family-notice"_spr)) old->removeFromParent();
+    // a short first line ("RELATED GAMEPLAY DETECTED") is the caption, the rest the message
+    std::string caption = "GPRL";
+    size_t first = 0;
+    if (lines.size() > 1 && lines[0].size() <= 48) {
+        caption = lines[0];
+        first = 1;
+    }
     std::string text;
-    for (size_t i = 0; i < lines.size(); ++i) {
-        if (i) text += "\n";
+    for (size_t i = first; i < lines.size(); ++i) {
+        if (i > first) text += "\n";
         text += lines[i];
     }
-    auto* label = CCLabelBMFont::create(text.c_str(), "chatFont.fnt", 260.f, kCCTextAlignmentLeft);
-    label->setScale(0.5f);
-    label->setAnchorPoint({0.f, 0.5f});
-    float labelW = label->getScaledContentSize().width;
-    float labelH = label->getScaledContentSize().height;
-    float pad = 6.f;
-    float w = labelW + 2.f * pad;
-    float h = labelH + 2.f * pad;
-    auto* panel = makePanel({16, 18, 34}, 215, w, h);
-    panel->setID("family-notice"_spr);
-    panel->ignoreAnchorPointForPosition(false);
-    panel->setAnchorPoint({0.f, 1.f});
-    panel->setPosition({6.f, win.height - 6.f});
-    panel->setZOrder(99999);
-    panel->setCascadeOpacityEnabled(true);
-    label->setPosition({pad, h * 0.5f});
-    panel->addChild(label);
-    panel->runAction(CCSequence::create(CCDelayTime::create(std::max(1.f, seconds)), CCFadeOut::create(0.6f), CCRemoveSelf::create(), nullptr));
-    scene->addChild(panel);
-    log::info("GPRL: family notice: {}", text);
+    auto* toast = buildToast(caption, text, ToastKind::Info);
+    toast->setID("family-notice"_spr);
+    toast->setAnchorPoint({0.f, 1.f});
+    toast->setPosition({kToastMargin - kToastSlide, win.height - kToastMargin});
+    toast->setZOrder(99999);
+    animateToast(toast, kToastSlide, seconds);
+    scene->addChild(toast);
+    log::info("GPRL: family notice: {} | {}", caption, text);
 }
 
 }  // namespace gprl::hud
