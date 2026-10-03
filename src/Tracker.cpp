@@ -492,10 +492,11 @@ void onDestroyPlayer(PlayLayer* pl, PlayerObject* player, GameObject* object, bo
     facts.deadAfter = isDead;
     auto verdict = classify::classifyDestroy(facts);
     if (verdict == classify::DestroyVerdict::Ignore) return;
-    // v0.10.0: a noclip menu swallows the destroy on every frame inside the hazard (and once per
-    // hazard touched in a frame); like Eclipse's counter, a death is one contiguous run of frames
+    // a noclip menu swallows the destroy on every tick inside the hazard (and once per hazard
+    // touched in a tick); like Eclipse's counter, a death is one contiguous run of TICKS
+    // (v0.14.1: m_currentProgress advances 2 per tick, hence tickFromProgress)
     if (verdict == classify::DestroyVerdict::WouldBeDeath
-        && !classify::startsWouldBeDeath(s.attempt.wouldBe, static_cast<int64_t>(pl->m_gameState.m_currentProgress)))
+        && !classify::startsWouldBeDeath(s.attempt.wouldBe, classify::tickFromProgress(static_cast<int64_t>(pl->m_gameState.m_currentProgress))))
         return;
     double percent = currentPercent(pl);
     s.attempt.lastKnownPercent = percent;

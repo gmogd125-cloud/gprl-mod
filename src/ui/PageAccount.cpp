@@ -127,7 +127,7 @@ void GprlMenu::buildAccount() {
         d->setPosition({kPad + 4.f, h1 - 24.f});
         c1->addChild(d);
         float const buttonRoom = 96.f;
-        text(c1, line, kPad + 12.f, h1 - 24.f, cardW - kPad - 12.f - buttonRoom, color, 0.36f, kChat, {0.f, 0.5f});
+        text(c1, line, kPad + 12.f, h1 - 24.f, cardW - kPad - 12.f - buttonRoom, color, 0.38f, kChat, {0.f, 0.5f});
         std::string sub;
         ccColor3B subColor = kGrey;
         if (!st.connecting && !st.connected && st.connectMessage.rfind("Connect failed", 0) == 0) {
@@ -144,9 +144,9 @@ void GprlMenu::buildAccount() {
         }
         else if (st.connected) sub = fmt::format("GPRL player {}   -   {}", st.username, st.apiBaseUrl);
         else sub = "Connect uses the Geometry Dash account you are logged in with; no website account is needed.";
-        text(c1, sub, kPad, h1 - 39.f, cardW - 2.f * kPad - buttonRoom, subColor, 0.3f, kChat, {0.f, 0.5f});
-        CCMenuItemSpriteExtra* btn = st.connected ? button(menu, "Disconnect", "GJ_button_06.png", 0.42f, this, menu_selector(GprlMenu::onDisconnect))
-                                                  : button(menu, "Connect", "GJ_button_01.png", 0.55f, this, menu_selector(GprlMenu::onConnect));
+        text(c1, sub, kPad, h1 - 39.f, cardW - 2.f * kPad - buttonRoom, subColor, 0.33f, kChat, {0.f, 0.5f});
+        CCMenuItemSpriteExtra* btn = st.connected ? button(menu, "Disconnect", "GJ_button_06.png", 0.34f, this, menu_selector(GprlMenu::onDisconnect))
+                                                  : button(menu, "Connect", "GJ_button_01.png", 0.42f, this, menu_selector(GprlMenu::onConnect));
         btn->setPosition({6.f + cardW - kPad - btn->getScaledContentSize().width / 2.f, y + h1 - 31.f});
         setButtonEnabled(btn, !busy);
         if (st.connected) {
@@ -156,22 +156,22 @@ void GprlMenu::buildAccount() {
             float const lineY = y + h1 - 54.f;
             float right = 6.f + cardW - kPad;
             if (patreonLinked) {
-                auto sync = button(menu, "Sync Patreon", "GJ_button_02.png", 0.3f, this, menu_selector(GprlMenu::onPatreonSync));
+                auto sync = button(menu, "Sync Patreon", "GJ_button_02.png", 0.26f, this, menu_selector(GprlMenu::onPatreonSync));
                 sync->setPosition({right - sync->getScaledContentSize().width / 2.f, lineY});
                 right -= sync->getScaledContentSize().width + 5.f;
                 setButtonEnabled(sync, !st.patreonSyncPending);
             }
             else {
-                auto code = button(menu, "Enter Patreon code", "GJ_button_01.png", 0.3f, this, menu_selector(GprlMenu::onPatreonCode));
+                auto code = button(menu, "Enter Patreon code", "GJ_button_01.png", 0.26f, this, menu_selector(GprlMenu::onPatreonCode));
                 code->setPosition({right - code->getScaledContentSize().width / 2.f, lineY});
                 right -= code->getScaledContentSize().width + 5.f;
                 setButtonEnabled(code, !st.patreonConfirmPending);
-                auto connectP = button(menu, "Connect Patreon", "GJ_button_01.png", 0.3f, this, menu_selector(GprlMenu::onPatreonConnect));
+                auto connectP = button(menu, "Connect Patreon", "GJ_button_01.png", 0.26f, this, menu_selector(GprlMenu::onPatreonConnect));
                 connectP->setPosition({right - connectP->getScaledContentSize().width / 2.f, lineY});
                 right -= connectP->getScaledContentSize().width + 5.f;
                 setButtonEnabled(connectP, !st.patreonConnectPending);
             }
-            text(c1, plan, kPad, h1 - 54.f, right - 6.f - kPad - 4.f, planColor(st), 0.3f, kChat, {0.f, 0.5f});
+            text(c1, plan, kPad, h1 - 54.f, right - 6.f - kPad - 4.f, planColor(st), 0.33f, kChat, {0.f, 0.5f});
         }
     }
 
@@ -183,9 +183,9 @@ void GprlMenu::buildAccount() {
         bool const live = !wc.code.empty() && wc.secondsLeft > 0;
         std::string codeText = !wc.code.empty() ? wc.code : (wc.pending ? "requesting..." : "no code");
         text(c2, codeText, kPad, h2 - 24.f, cardW - 2.f * kPad - 110.f, !wc.code.empty() && live ? kWhite : kGrey, 0.72f, kChat, {0.f, 0.5f}, 0.35f);
-        m_codeCountdown = text(c2, "", kPad, h2 - 40.f, cardW - 2.f * kPad - 110.f, kGrey, 0.3f, kChat, {0.f, 0.5f});
-        m_copyBtn = button(menu, "Copy", "GJ_button_01.png", 0.42f, this, menu_selector(GprlMenu::onCopyCode));
-        auto hide = button(menu, "Hide", "GJ_button_06.png", 0.36f, this, menu_selector(GprlMenu::onHideCode));
+        m_codeCountdown = text(c2, "", kPad, h2 - 40.f, cardW - 2.f * kPad - 110.f, kGrey, 0.33f, kChat, {0.f, 0.5f});
+        m_copyBtn = button(menu, "Copy", "GJ_button_01.png", 0.34f, this, menu_selector(GprlMenu::onCopyCode));
+        auto hide = button(menu, "Hide", "GJ_button_06.png", 0.3f, this, menu_selector(GprlMenu::onHideCode));
         float bx = 6.f + cardW - kPad;
         hide->setPosition({bx - hide->getScaledContentSize().width / 2.f, y + h2 / 2.f - 4.f});
         bx -= hide->getScaledContentSize().width + 6.f;
@@ -194,10 +194,10 @@ void GprlMenu::buildAccount() {
     }
     else {
         text(c2, "Your profile, the leaderboard and run reviews live on the GPRL website. Sign in there with a one-time code from this menu.", kPad, h2 - 22.f,
-             cardW - 2.f * kPad, kGrey, 0.3f, kChat, {0.f, 0.5f});
-        auto profile = button(menu, "Open my profile", "GJ_button_02.png", 0.4f, this, menu_selector(GprlMenu::onProfile));
-        auto code = button(menu, "Website code", "GJ_button_02.png", 0.4f, this, menu_selector(GprlMenu::onWebsiteCode));
-        auto visit = button(menu, "Visit website", "GJ_button_04.png", 0.4f, this, menu_selector(GprlMenu::onVisitSite));
+             cardW - 2.f * kPad, kGrey, 0.33f, kChat, {0.f, 0.5f});
+        auto profile = button(menu, "Open my profile", "GJ_button_02.png", 0.3f, this, menu_selector(GprlMenu::onProfile));
+        auto code = button(menu, "Website code", "GJ_button_02.png", 0.3f, this, menu_selector(GprlMenu::onWebsiteCode));
+        auto visit = button(menu, "Visit website", "GJ_button_04.png", 0.3f, this, menu_selector(GprlMenu::onVisitSite));
         float bx = 6.f + kPad;
         for (auto* b : {profile, code, visit}) {
             b->setPosition({bx + b->getScaledContentSize().width / 2.f, y + 12.f});
@@ -214,9 +214,9 @@ void GprlMenu::buildAccount() {
     auto c3 = card(m_page, 6.f, y, cardW, h3, "Clipping (evidence of exceptional runs)");
     {
         ccColor3B bufferColor = !cl.config.enabled ? kGrey : (cl.bufferProblem ? kOrange : (cl.capture.recording ? kGreen : kWhite));
-        text(c3, cl.bufferLine, kPad, h3 - 22.f, cardW - 2.f * kPad, bufferColor, 0.3f, kChat, {0.f, 0.5f});
+        text(c3, cl.bufferLine, kPad, h3 - 22.f, cardW - 2.f * kPad, bufferColor, 0.33f, kChat, {0.f, 0.5f});
         text(c3, clipLine.empty() ? std::string("No clips yet - a run the server wants to verify, or Clip last attempt, makes one") : clipLine, kPad, h3 - 33.f,
-             cardW - 2.f * kPad, clipColor, 0.28f, kChat, {0.f, 0.5f});
+             cardW - 2.f * kPad, clipColor, 0.32f, kChat, {0.f, 0.5f});
         struct ClipButton {
             bool show;
             bool enabled;
@@ -234,13 +234,13 @@ void GprlMenu::buildAccount() {
         float bx = 6.f + kPad;
         for (auto const& cb : buttons) {
             if (!cb.show) continue;
-            auto b = button(menu, cb.label, cb.texture, 0.32f, this, cb.handler);
+            auto b = button(menu, cb.label, cb.texture, 0.26f, this, cb.handler);
             b->setPosition({bx + b->getScaledContentSize().width / 2.f, y + 10.f});
             bx += b->getScaledContentSize().width + 5.f;
             setButtonEnabled(b, cb.enabled);
         }
         if (!cl.config.enabled && cl.clips.empty()) {
-            text(c3, "Clipping is off (mod settings): turn it on to keep a video of exceptional runs for review.", kPad, 10.f, cardW - 2.f * kPad, kDim, 0.28f, kChat,
+            text(c3, "Clipping is off (mod settings): turn it on to keep a video of exceptional runs for review.", kPad, 10.f, cardW - 2.f * kPad, kDim, 0.32f, kChat,
                  {0.f, 0.5f});
         }
     }
@@ -253,7 +253,7 @@ void GprlMenu::buildAccount() {
         float ly = h4 - 18.f;
         float const lw = cardW - 2.f * kPad;
         float const lwShort = lw - 180.f;   // the third line shares its height with the button row
-        text(c4, analysisLine, kPad, ly, lw, settings::get().recordSafe ? kGold : kGrey, 0.3f, kChat, {0.f, 0.5f});
+        text(c4, analysisLine, kPad, ly, lw, settings::get().recordSafe ? kGold : kGrey, 0.33f, kChat, {0.f, 0.5f});
         ly -= 10.f;
         // one line shorter while connected (the plan line above): without room for a third line a
         // last error takes the session line's place (the counters stay in the Details popup)
@@ -262,16 +262,16 @@ void GprlMenu::buildAccount() {
             ? fmt::format("Session {} ({}), attempt #{}  -  ", st.sessionId.empty() ? "opening" : st.sessionId, client::name(st.mode), view.attemptNo)
             : std::string("No session open  -  ");
         session += fmt::format("batches sent {}  spooled {}  failed {}  -  events pending {}", st.batchesSent, st.batchesSpooled, st.batchesFailed, st.eventsPending);
-        if (!room3 && !st.lastError.empty()) text(c4, "Last error: " + st.lastError, kPad, ly, lwShort, kRed, 0.3f, kChat, {0.f, 0.5f});
-        else text(c4, session, kPad, ly, room3 ? lw : lwShort, kGrey, 0.3f, kChat, {0.f, 0.5f});
+        if (!room3 && !st.lastError.empty()) text(c4, "Last error: " + st.lastError, kPad, ly, lwShort, kRed, 0.33f, kChat, {0.f, 0.5f});
+        else text(c4, session, kPad, ly, room3 ? lw : lwShort, kGrey, 0.33f, kChat, {0.f, 0.5f});
         ly -= 10.f;
         if (room3) {
-            if (!st.lastError.empty()) text(c4, "Last error: " + st.lastError, kPad, ly, lwShort, kRed, 0.3f, kChat, {0.f, 0.5f});
-            else text(c4, fmt::format("spool: {} records", localstore::recordsWritten()), kPad, ly, lwShort, kDim, 0.28f, kChat, {0.f, 0.5f});
+            if (!st.lastError.empty()) text(c4, "Last error: " + st.lastError, kPad, ly, lwShort, kRed, 0.33f, kChat, {0.f, 0.5f});
+            else text(c4, fmt::format("spool: {} records", localstore::recordsWritten()), kPad, ly, lwShort, kDim, 0.32f, kChat, {0.f, 0.5f});
         }
-        auto settingsBtn = button(menu, "Settings", "GJ_button_05.png", 0.4f, this, menu_selector(GprlMenu::onSettings));
-        auto flush = button(menu, "Flush", "GJ_button_04.png", 0.36f, this, menu_selector(GprlMenu::onFlush));
-        auto reset = button(menu, "Reset data", "GJ_button_06.png", 0.36f, this, menu_selector(GprlMenu::onResetData));
+        auto settingsBtn = button(menu, "Settings", "GJ_button_05.png", 0.32f, this, menu_selector(GprlMenu::onSettings));
+        auto flush = button(menu, "Flush", "GJ_button_04.png", 0.3f, this, menu_selector(GprlMenu::onFlush));
+        auto reset = button(menu, "Reset data", "GJ_button_06.png", 0.3f, this, menu_selector(GprlMenu::onResetData));
         float bx = 6.f + cardW - kPad;
         float const by = 6.f + 12.f;
         for (auto* b : {settingsBtn, flush, reset}) {
@@ -299,8 +299,8 @@ void GprlMenu::tickAccount() {
         color = kOrange;
     }
     m_codeCountdown->setString(s.c_str());
-    m_codeCountdown->setScale(0.3f);
-    m_codeCountdown->limitLabelWidth(kContentW - 12.f - 2.f * kPad - 110.f, 0.3f, 0.2f);
+    m_codeCountdown->setScale(0.33f);
+    m_codeCountdown->limitLabelWidth(kContentW - 12.f - 2.f * kPad - 110.f, 0.33f, 0.2f);
     m_codeCountdown->setColor(color);
     setButtonEnabled(m_copyBtn, live);
 }

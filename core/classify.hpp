@@ -155,17 +155,26 @@ struct DestroyFacts {
 DestroyVerdict classifyDestroy(DestroyFacts const& f);
 
 /// v0.10.0 (owner report: "on Mega Hack the noclip deaths go crazy"): GD calls `destroyPlayer`
-/// on EVERY frame the player is inside a hazard, and for every hazard touched in a frame, so a
-/// noclip menu that swallows the call makes one death look like dozens. Eclipse Menu's rule
-/// (its "Noclip Deaths" counter, `NoClipGJBGLHook::processCommands`): a death is one CONTIGUOUS
-/// run of frames with a swallowed destroy; a frame without one ends the run. `frame` is
-/// `GJGameState::m_currentProgress` (what Eclipse compares), not the half-rate telemetry tick.
+/// on EVERY physics tick the player is inside a hazard, and for every hazard touched in a tick,
+/// so a noclip menu that swallows the call makes one death look like dozens. Eclipse Menu's rule
+/// (src/hacks/Player/Noclip.cpp: destroyPlayer sets `m_wouldDieFrame`, and once per physics step
+/// `GJBaseGameLayer::processCommands` adds a death only when it is set and `m_deadLastFrame` is
+/// not): a death is one CONTIGUOUS run of TICKS with a swallowed destroy; a tick without one ends
+/// the run. Only player 1 / 2 count and GD's anti-cheat spike never does (classifyDestroy).
+///
+/// v0.14.1 fix (owner report 2026-10-02: "noclip deaths are still going wild"): the streak was
+/// fed `GJGameState::m_currentProgress`, which GD advances by 2 per tick (GD_PHYSICS_NOTES), so
+/// consecutive ticks were never contiguous and every tick inside a hazard counted as a death
+/// (live data: median gap 1 tick between would-be deaths, 470 in one attempt). The streak runs on
+/// ticks: always pass `tickFromProgress(m_currentProgress)`.
+inline int64_t tickFromProgress(int64_t currentProgress) { return currentProgress / 2; }
+
 struct WouldBeDeathStreak {
-    int64_t lastFrame = -1000;   // frame of the last swallowed destroy; -1000 = none yet
+    int64_t lastTick = -1000;   // tick of the last swallowed destroy; -1000 = none yet
 };
-/// True when a swallowed destroy at `frame` starts a NEW would-be death (the same frame or the
-/// next one continues the current death). Updates the streak either way.
-bool startsWouldBeDeath(WouldBeDeathStreak& streak, int64_t frame);
+/// True when a swallowed destroy at `tick` (tickFromProgress) starts a NEW would-be death: the
+/// same tick or the next one continues the current death. Updates the streak either way.
+bool startsWouldBeDeath(WouldBeDeathStreak& streak, int64_t tick);
 
 // ---- environment (SPEC §19-§21, TELEMETRY.md §6: "sent at session start and when it changes") ----
 

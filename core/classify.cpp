@@ -82,10 +82,10 @@ DestroyVerdict classifyDestroy(DestroyFacts const& f) {
     return f.deadAfter ? DestroyVerdict::Death : DestroyVerdict::WouldBeDeath;
 }
 
-bool startsWouldBeDeath(WouldBeDeathStreak& streak, int64_t frame) {
-    // the same frame, the next one, or an older one (clamped clocks) continue the current death
-    bool contiguous = frame <= streak.lastFrame + 1;
-    streak.lastFrame = std::max(frame, streak.lastFrame);
+bool startsWouldBeDeath(WouldBeDeathStreak& streak, int64_t tick) {
+    // the same tick, the next one, or an older one (clamped clocks) continue the current death
+    bool contiguous = tick <= streak.lastTick + 1;
+    streak.lastTick = std::max(tick, streak.lastTick);
     return !contiguous;
 }
 

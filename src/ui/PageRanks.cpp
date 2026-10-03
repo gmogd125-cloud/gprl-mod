@@ -32,9 +32,9 @@ void GprlMenu::buildRanks() {
     // the disclaimer strip (owner wording, 2026-10-02) with the full text behind the info button
     float const stripH = 34.f;
     auto strip = card(m_page, 6.f, H - 6.f - stripH, W - 12.f, stripH, nullptr, {70, 58, 22}, 225);
-    text(strip, "What the level ranges mean", kPad, stripH - 9.f, W - 60.f, kGold, 0.36f, kGoldFont, {0.f, 0.5f});
+    text(strip, "What the level ranges mean", kPad, stripH - 9.f, W - 60.f, kGold, 0.38f, kGoldFont, {0.f, 0.5f});
     text(strip, "A rank's levels are what you could beat in about 10,000 attempts on a 100-second level - not a fast or first-try beat.", kPad, stripH - 23.f, W - 48.f,
-         kWhite, 0.3f, kChat, {0.f, 0.5f});
+         kWhite, 0.32f, kChat, {0.f, 0.5f});
     auto info = iconButton(menu, "GJ_infoIcon_001.png", 16.f, this, menu_selector(GprlMenu::onRanksInfo));
     info->setPosition({W - 20.f, H - 6.f - stripH / 2.f});
 
@@ -81,10 +81,10 @@ void GprlMenu::buildRanks() {
         // the right-aligned tag first: the name is clipped to the room left of it
         float nameRoom = rowW - textX - 10.f;
         CCNode* tag = nullptr;
-        if (unreached) tag = chip("Unreached", {60, 60, 70}, kGrey, 0.24f);
-        else if (you) tag = chip("YOU ARE HERE", toCc(ranks::scaled(r.color, 0.55)), kWhite, 0.26f);
+        if (unreached) tag = chip("Unreached", {60, 60, 70}, kGrey, 0.28f);
+        else if (you) tag = chip("YOU ARE HERE", toCc(ranks::scaled(r.color, 0.55)), kWhite, 0.3f);
         else if (r.playerCount > 0) {
-            auto t = text(row, fmt::format("{} player{}", r.playerCount, r.playerCount == 1 ? "" : "s"), rowW - 8.f, h - 11.f, 90.f, kGrey, 0.3f, kChat, {1.f, 0.5f});
+            auto t = text(row, fmt::format("{} player{}", r.playerCount, r.playerCount == 1 ? "" : "s"), rowW - 8.f, h - 11.f, 90.f, kGrey, 0.32f, kChat, {1.f, 0.5f});
             nameRoom -= t->getScaledContentSize().width + 10.f;
         }
         if (tag) {
@@ -98,15 +98,15 @@ void GprlMenu::buildRanks() {
         float const fullW = rowW - textX - 10.f;
         float y = h - 24.f;
         if (!ascendant) {
-            auto bands = text(row, ranks::formatBands(r) + " sigma/s", textX, y, fullW, unreached ? kDim : kWhite, 0.36f, kChat, {0.f, 0.5f});
+            auto bands = text(row, ranks::formatBands(r) + " sigma/s", textX, y, fullW, unreached ? kDim : kWhite, 0.38f, kChat, {0.f, 0.5f});
             bands->setOpacity(alpha);
             y -= 11.f;
         }
-        auto req = text(row, "Needs: " + ranks::formatRequirements(r.requirements), textX, y, fullW, kGrey, 0.3f, kChat, {0.f, 0.5f});
+        auto req = text(row, "Needs: " + ranks::formatRequirements(r.requirements), textX, y, fullW, kGrey, 0.32f, kChat, {0.f, 0.5f});
         req->setOpacity(alpha);
         y -= 11.f;
         if (!ascendant && !r.description.empty()) {
-            auto d = text(row, r.description, textX, y, fullW, kGrey, 0.3f, kChat, {0.f, 0.5f});
+            auto d = text(row, r.description, textX, y, fullW, kGrey, 0.32f, kChat, {0.f, 0.5f});
             d->setOpacity(alpha);
         }
         scroll->m_contentLayer->addChild(row);

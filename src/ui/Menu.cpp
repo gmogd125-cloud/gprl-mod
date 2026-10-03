@@ -1,6 +1,7 @@
 #include "Menu.hpp"
 
 #include <Geode/ui/GeodeUI.hpp>
+#include <Geode/ui/MDPopup.hpp>
 #include <Geode/ui/Notification.hpp>
 #include <Geode/utils/web.hpp>
 
@@ -120,7 +121,7 @@ void GprlMenu::buildSidebar() {
         ic->setPosition({kTileW / 2.f, kTileH - 15.f});
         holder->addChild(ic, 1);
         m_tileIcon[i] = ic;
-        auto label = text(holder, kTabs[i].label, kTileW / 2.f, 9.f, kTileW - 6.f, kGrey, 0.26f, kBig, {0.5f, 0.5f});
+        auto label = text(holder, kTabs[i].label, kTileW / 2.f, 9.f, kTileW - 6.f, kGrey, 0.3f, kBig, {0.5f, 0.5f});
         m_tileLabel[i] = label;
         auto btn = CCMenuItemSpriteExtra::create(holder, this, menu_selector(GprlMenu::onTab));
         btn->setTag(i);
@@ -234,7 +235,7 @@ void GprlMenu::refreshHeader() {
     text(m_header, kTabs[static_cast<int>(m_screen)].title, kContentX + 4.f, kHeaderY, 170.f, kGold, 0.55f, kGoldFont, {0.f, 0.5f});
     float right = kContentX + kContentW;
     for (auto it = chips.rbegin(); it != chips.rend(); ++it) {
-        auto c = chip(it->text, it->bg, kWhite, 0.28f);
+        auto c = chip(it->text, it->bg, kWhite, 0.3f);
         right -= c->getContentSize().width;
         c->setPosition({right, kHeaderY});
         m_header->addChild(c);
@@ -264,8 +265,8 @@ void GprlMenu::emptyState(std::string const& title, std::string const& line1, st
     using namespace theme;
     float const cx = kContentW / 2.f;
     text(m_page, title, cx, kContentH * 0.62f, kContentW - 40.f, kGold, 0.55f, kGoldFont, {0.5f, 0.5f});
-    if (!line1.empty()) text(m_page, line1, cx, kContentH * 0.62f - 22.f, kContentW - 40.f, kWhite, 0.4f, kChat, {0.5f, 0.5f});
-    if (!line2.empty()) text(m_page, line2, cx, kContentH * 0.62f - 36.f, kContentW - 40.f, kGrey, 0.36f, kChat, {0.5f, 0.5f});
+    if (!line1.empty()) text(m_page, line1, cx, kContentH * 0.62f - 22.f, kContentW - 40.f, kWhite, 0.42f, kChat, {0.5f, 0.5f});
+    if (!line2.empty()) text(m_page, line2, cx, kContentH * 0.62f - 36.f, kContentW - 40.f, kGrey, 0.38f, kChat, {0.5f, 0.5f});
 }
 
 bool GprlMenu::siteState(client::SiteData const& site, client::SiteFetchState const& st, char const* what) {
@@ -365,25 +366,27 @@ void GprlMenu::onDetails(CCObject*) { DetailsPopup::open(); }
 
 void GprlMenu::onGoAccount(CCObject*) { selectScreen(Screen::Account); }
 
+// Both explainers are scrollable Markdown popups (owner feedback 2026-10-02: a plain FLAlertLayer
+// let the text run off the screen).
 void GprlMenu::onWhatIsSigma(CCObject*) {
-    FLAlertLayer::create(nullptr, "What is sigma/s?",
-                         "<cy>sigma/s</c> is GPRL's precision score: one divided by the spread of your timing error, in seconds.\n\n"
-                         "At <cg>100 sigma/s</c> most of your inputs land within about 10 ms of the ideal moment; at <cg>200</c> within about 5 ms.\n\n"
-                         "While you play, the mod finds the exact timing window of every click with a hidden copy of the game. The GPRL server fits your "
-                         "precision from thousands of those windows: the mod measures, only the server rates.\n\n"
-                         "Your sigma/s stays <cy>LOCKED</c> until your calibration is complete and the server is confident enough. Your rank follows "
-                         "once the Rating Confidence reaches the ladder's minimum (90%).",
-                         "OK", nullptr, 400.f)
+    MDPopup::create("What is sigma/s?",
+        "**sigma/s** is GPRL's precision score: one divided by the spread of your timing error, in seconds.\n\n"
+        "At **100 sigma/s** most of your inputs land within about 10 ms of the ideal moment; at **200** within about 5 ms.\n\n"
+        "While you play, the mod finds the exact timing window of every click with a hidden copy of the game. The GPRL server fits your "
+        "precision from thousands of those windows: the mod measures, only the server rates.\n\n"
+        "Your sigma/s stays **LOCKED** until your calibration is complete and the server is confident enough. Your rank follows once the "
+        "Rating Confidence reaches the ladder's minimum (90%).",
+        "OK")
         ->show();
 }
 
 void GprlMenu::onRanksInfo(CCObject*) {
-    FLAlertLayer::create(nullptr, "What the rank levels mean",
-                         "The levels named for each rank are what you could beat in about <cy>10,000 attempts</c>, if the level were "
-                         "<cy>100 seconds</c> long.\n\nIt is not how fast or how first-try you would beat it. Fewer attempts, or a longer level, "
-                         "needs a higher sigma/s. More attempts or a shorter level needs less.\n\n"
-                         "Every threshold on this ladder is GPRL server configuration and can change; nothing is hardcoded in the mod.",
-                         "OK", nullptr, 400.f)
+    MDPopup::create("What the rank levels mean",
+        "The levels named for each rank are what you could beat in about **10,000 attempts**, if the level were **100 seconds** long.\n\n"
+        "It is not how fast or how first-try you would beat it. Fewer attempts, or a longer level, needs a higher sigma/s. More attempts "
+        "or a shorter level needs less.\n\n"
+        "Every threshold on this ladder is GPRL server configuration and can change; nothing is hardcoded in the mod.",
+        "OK")
         ->show();
 }
 

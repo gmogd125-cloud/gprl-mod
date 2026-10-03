@@ -366,6 +366,30 @@ void testWouldBeStreak() {
     // a fresh attempt starts a fresh streak
     WouldBeDeathStreak fresh;
     CHECK(startsWouldBeDeath(fresh, 0));
+
+    SECTION("v0.14.1: the streak runs on TICKS - GD advances m_currentProgress by 2 per tick");
+    // The owner's live pattern (median gap 1 tick, 470 would-be deaths in one attempt): a noclip
+    // pass through a hazard for 470 consecutive ticks reaches the tracker as m_currentProgress
+    // 2000, 2002, 2004, ... Fed raw, every call looked like a gap and counted; through
+    // tickFromProgress it is one death, like Eclipse's counter.
+    CHECK(tickFromProgress(0) == 0);
+    CHECK(tickFromProgress(2) == 1);
+    CHECK(tickFromProgress(2001) == 1000);
+    WouldBeDeathStreak raw, ticked;
+    int rawDeaths = 0, tickDeaths = 0;
+    for (int t = 0; t < 470; ++t) {
+        int64_t progress = 2000 + 2 * t;
+        rawDeaths += startsWouldBeDeath(raw, progress) ? 1 : 0;              // the v0.10.0 bug
+        tickDeaths += startsWouldBeDeath(ticked, tickFromProgress(progress)) ? 1 : 0;
+    }
+    CHECK(rawDeaths == 470);    // documents the bug the call site had
+    CHECK(tickDeaths == 1);
+    // several hazards in one tick (two progress calls with the same value) stay one death, and
+    // one clear tick between two spikes (progress jumps by 4) starts the next one
+    WouldBeDeathStreak row;
+    int rowDeaths = 0;
+    for (int64_t p : {100, 100, 102, 104, 108, 108, 110, 116}) rowDeaths += startsWouldBeDeath(row, tickFromProgress(p)) ? 1 : 0;
+    CHECK(rowDeaths == 3);      // ticks 50-52, 54-55, 58
 }
 
 // ---- environment ----

@@ -38,7 +38,7 @@ CCNode* card(CCNode* parent, float x, float y, float w, float h, char const* tit
     node->setAnchorPoint({0.f, 0.f});
     node->setPosition({x, y});
     panel(node, 0.f, 0.f, w, h, tint, opacity, -1);
-    if (title && *title) text(node, title, theme::kPad, h - 5.f, w - 2.f * theme::kPad, theme::kGold, 0.4f, theme::kGoldFont);
+    if (title && *title) text(node, title, theme::kPad, h - 5.f, w - 2.f * theme::kPad, theme::kGold, 0.42f, theme::kGoldFont);
     parent->addChild(node);
     return node;
 }
@@ -224,8 +224,8 @@ CCNode* tile(float w, float h, std::string const& value, std::string const& capt
     node->setContentSize({w, h});
     node->setAnchorPoint({0.f, 0.f});
     panel(node, 0.f, 0.f, w, h, tint, 220, -1);
-    text(node, value, w / 2.f, h * 0.62f, w - 8.f, valueColor, 0.42f, theme::kBig, {0.5f, 0.5f});
-    text(node, caption, w / 2.f, h * 0.24f, w - 6.f, theme::kGrey, 0.3f, theme::kChat, {0.5f, 0.5f});
+    text(node, value, w / 2.f, h * 0.62f, w - 8.f, valueColor, 0.44f, theme::kBig, {0.5f, 0.5f});
+    text(node, caption, w / 2.f, h * 0.24f, w - 6.f, theme::kGrey, 0.32f, theme::kChat, {0.5f, 0.5f});
     return node;
 }
 

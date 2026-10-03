@@ -93,7 +93,7 @@ void GprlMenu::buildLevel() {
     float const lcY = H - 6.f - lcH;
     auto lc = card(m_page, 6.f, lcY, W - 12.f, lcH);
     text(lc, ses.levelName.empty() ? std::string("Unnamed level") : ses.levelName, 10.f, lcH - 13.f, 190.f, kWhite, 0.42f, kBig, {0.f, 0.5f});
-    text(lc, fmt::format("ID {}   -   {}", ses.levelId, ses.levelOpen ? "playing now" : "last played"), 10.f, lcH - 31.f, 200.f, kGrey, 0.3f, kChat, {0.f, 0.5f});
+    text(lc, fmt::format("ID {}   -   {}", ses.levelId, ses.levelOpen ? "playing now" : "last played"), 10.f, lcH - 31.f, 200.f, kGrey, 0.33f, kChat, {0.f, 0.5f});
     // chips, right to left, above the Details button
     struct Chip {
         std::string text;
@@ -108,13 +108,13 @@ void GprlMenu::buildLevel() {
     if (trust != TrustState::Allowed) chips.push_back({trustWord(trust), {150, 70, 40}});
     float right = W - 12.f - 8.f;
     for (auto it = chips.rbegin(); it != chips.rend(); ++it) {
-        auto c = chip(it->text, it->bg, kWhite, 0.24f);
+        auto c = chip(it->text, it->bg, kWhite, 0.28f);
         right -= c->getContentSize().width;
         c->setPosition({right, lcH - 13.f});
         lc->addChild(c);
         right -= 4.f;
     }
-    auto details = button(menu, "Details", "GJ_button_04.png", 0.36f, this, menu_selector(GprlMenu::onDetails));
+    auto details = button(menu, "Details", "GJ_button_04.png", 0.3f, this, menu_selector(GprlMenu::onDetails));
     details->setPosition({W - 6.f - 8.f - details->getScaledContentSize().width / 2.f, lcY + 13.f});
 
     // ---- stat tiles (2 x 4) ----
@@ -154,31 +154,31 @@ void GprlMenu::buildLevel() {
     float const analysisH = total - solverH - 6.f;
     auto sc = card(m_page, 6.f, 6.f + analysisH + 6.f, W - 12.f, solverH, "Timing windows");
     ccColor3B solColor = sol.measuring ? (sol.levelOnly ? kGold : kGreen) : (sol.active ? kOrange : kGold);
-    text(sc, sol.line, kPad, solverH - 19.f, W - 12.f - 2.f * kPad, solColor, 0.32f, kChat, {0.f, 0.5f});
+    text(sc, sol.line, kPad, solverH - 19.f, W - 12.f - 2.f * kPad, solColor, 0.34f, kChat, {0.f, 0.5f});
     if (sol.active) {
         float by = solverH - 33.f;
-        text(sc, fmt::format("Inputs with a window: {}%", static_cast<int>(std::floor(sol.coverage))), kPad, by, 130.f, kGrey, 0.3f, kChat, {0.f, 0.5f});
+        text(sc, fmt::format("Inputs with a window: {}%", static_cast<int>(std::floor(sol.coverage))), kPad, by, 130.f, kGrey, 0.33f, kChat, {0.f, 0.5f});
         auto pb = bar(W - 12.f - 2.f * kPad - 140.f, 5.f, sol.coverage / 100.0, kCyan, {0, 0, 0}, 140);
         pb->setPosition({kPad + 140.f, by});
         sc->addChild(pb);
         std::string counts = fmt::format("{} measured   {} misses   {} dropped", sol.emitted, sol.misses, sol.dropped);
         if (!sol.mismatchKinds.empty()) counts += "  (" + sol.mismatchKinds + ")";
         if (sol.localSamples > 0) counts += fmt::format("   {} local samples", sol.localSamples);
-        text(sc, counts, kPad, solverH - 46.f, W - 12.f - 2.f * kPad, kGrey, 0.3f, kChat, {0.f, 0.5f});
+        text(sc, counts, kPad, solverH - 46.f, W - 12.f - 2.f * kPad, kGrey, 0.33f, kChat, {0.f, 0.5f});
     }
     else {
         text(sc, "The solver measures the exact timing window of every click with hidden copies of the game; nothing here changes your run.", kPad, solverH - 33.f,
-             W - 12.f - 2.f * kPad, kGrey, 0.3f, kChat, {0.f, 0.5f});
+             W - 12.f - 2.f * kPad, kGrey, 0.33f, kChat, {0.f, 0.5f});
     }
     auto ac = card(m_page, 6.f, 6.f, W - 12.f, analysisH, "Level analysis");
     ccColor3B abColor = ab.problem ? kOrange : (ab.active ? kGreen : kGrey);
     float ly = analysisH - 19.f;
-    text(ac, ab.line1.empty() ? std::string("Level analysis: off") : ab.line1, kPad, ly, W - 12.f - 2.f * kPad, abColor, 0.3f, kChat, {0.f, 0.5f});
+    text(ac, ab.line1.empty() ? std::string("Level analysis: off") : ab.line1, kPad, ly, W - 12.f - 2.f * kPad, abColor, 0.33f, kChat, {0.f, 0.5f});
     ly -= 11.f;
-    if (ly > 4.f) text(ac, coverage, kPad, ly, W - 12.f - 2.f * kPad, covColor, 0.3f, kChat, {0.f, 0.5f});
+    if (ly > 4.f) text(ac, coverage, kPad, ly, W - 12.f - 2.f * kPad, covColor, 0.33f, kChat, {0.f, 0.5f});
     ly -= 11.f;
     std::string extra = !ab.line3.empty() ? ab.line3 : ab.line2;
-    if (!extra.empty() && ly > 4.f) text(ac, extra, kPad, ly, W - 12.f - 2.f * kPad, kGrey, 0.28f, kChat, {0.f, 0.5f});
+    if (!extra.empty() && ly > 4.f) text(ac, extra, kPad, ly, W - 12.f - 2.f * kPad, kGrey, 0.31f, kChat, {0.f, 0.5f});
 }
 
 // ---- Details popup ----
@@ -308,8 +308,8 @@ void DetailsPopup::onTick(float) {
     float const rowW = m_list->getContentSize().width - 2.f;
     for (auto const& l : ls) {
         auto row = CCNode::create();
-        row->setContentSize({rowW, 11.f});
-        text(row, l.first, 2.f, 5.5f, rowW - 4.f, l.second, 0.3f, kChat, {0.f, 0.5f});
+        row->setContentSize({rowW, 12.5f});
+        text(row, l.first, 2.f, 6.25f, rowW - 4.f, l.second, 0.34f, kChat, {0.f, 0.5f});
         m_list->m_contentLayer->addChild(row);
     }
     m_list->m_contentLayer->updateLayout();

@@ -94,7 +94,7 @@ void GprlMenu::buildWelcome(client::Status const& st) {
     paragraph(m_page,
               "The Geometry Precision Ranking List measures how precisely you click: the exact timing window of every input, fitted into one number - "
               "your sigma/s - and a rank.",
-              74.f, H - 38.f, W - 100.f, 0.36f, kGrey);
+              74.f, H - 38.f, W - 100.f, 0.4f, kGrey);
 
     // three steps
     float const gap = 8.f;
@@ -119,7 +119,7 @@ void GprlMenu::buildWelcome(client::Status const& st) {
             c->addChild(ic);
         }
         text(c, steps[i].title, 30.f, cardH - 16.f, cardW - 36.f, kGold, 0.42f, kGoldFont, {0.f, 0.5f});
-        paragraph(c, steps[i].body, 8.f, cardH - 30.f, cardW - 16.f, 0.3f, kWhite);
+        paragraph(c, steps[i].body, 8.f, cardH - 30.f, cardW - 16.f, 0.33f, kWhite);
     }
 
     // the one thing to do
@@ -148,7 +148,7 @@ void GprlMenu::buildWelcome(client::Status const& st) {
         color = kOrange;
     }
     else status = identity::describe(st.connection, "");
-    text(m_page, status, W / 2.f, 14.f, W - 20.f, color, 0.34f, kChat, {0.5f, 0.5f});
+    text(m_page, status, W / 2.f, 14.f, W - 20.f, color, 0.36f, kChat, {0.5f, 0.5f});
 }
 
 // ---- profile (connected) ----
@@ -226,24 +226,24 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
     else rankText = "Unranked";
     text(m_page, rankText, leftCx, H - 116.f, 118.f, rankColor, 0.46f, kGoldFont, {0.5f, 0.5f});
     if (progress) {
-        text(m_page, fmt::format("to {}  {}%", progress->nextName, static_cast<int>(std::floor(progress->percent + 1e-9))), leftCx, H - 130.f, 118.f, kGrey, 0.3f, kChat,
+        text(m_page, fmt::format("to {}  {}%", progress->nextName, static_cast<int>(std::floor(progress->percent + 1e-9))), leftCx, H - 130.f, 118.f, kGrey, 0.33f, kChat,
              {0.5f, 0.5f});
         auto pb = bar(104.f, 6.f, progress->percent / 100.0, kCyan);
         pb->setPosition({leftCx - 52.f, H - 140.f});
         m_page->addChild(pb);
     }
-    else if (!hint.empty()) paragraph(m_page, hint, 10.f, H - 124.f, 108.f, 0.3f, kGold);
-    else if (!sigmaVisible) text(m_page, "calibrating", leftCx, H - 130.f, 118.f, kDim, 0.3f, kChat, {0.5f, 0.5f});
+    else if (!hint.empty()) paragraph(m_page, hint, 10.f, H - 124.f, 108.f, 0.32f, kGold);
+    else if (!sigmaVisible) text(m_page, "calibrating", leftCx, H - 130.f, 118.f, kDim, 0.33f, kChat, {0.5f, 0.5f});
     if (!p) {
         std::string state = site.profileNotFound ? "No GPRL profile yet" : (!site.profileState.error.empty() ? "Profile unavailable" : "Loading profile...");
-        text(m_page, state, leftCx, H - 152.f, 118.f, site.profileNotFound ? kGold : kDim, 0.3f, kChat, {0.5f, 0.5f});
+        text(m_page, state, leftCx, H - 152.f, 118.f, site.profileNotFound ? kGold : kDim, 0.33f, kChat, {0.5f, 0.5f});
     }
 
     // ---- right column: the player and the number ----
     float const rx = 134.f;
     float const rw = W - rx - 10.f;
     auto nameLabel = text(m_page, displayName, rx, H - 12.f, 130.f, kWhite, 0.5f, kBig, {0.f, 0.5f}, 0.3f);
-    auto vchip = chip(gdVerified ? "GD verified" : "GD not verified", gdVerified ? ccColor3B{30, 110, 60} : ccColor3B{140, 80, 40}, kWhite, 0.24f);
+    auto vchip = chip(gdVerified ? "GD verified" : "GD not verified", gdVerified ? ccColor3B{30, 110, 60} : ccColor3B{140, 80, 40}, kWhite, 0.28f);
     vchip->setPosition({rx + nameLabel->getScaledContentSize().width + 8.f, H - 12.f});
     m_page->addChild(vchip);
     auto info = iconButton(menu, "GJ_infoIcon_001.png", 16.f, this, menu_selector(GprlMenu::onWhatIsSigma));
@@ -259,18 +259,18 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
         text(m_page,
              fmt::format("{} of {} effective timings  -  {} of {} gamemodes", static_cast<int>(std::floor(cal.effectiveSamples.current + 1e-9)),
                          static_cast<int>(cal.effectiveSamples.required), static_cast<int>(cal.gamemodes.current), static_cast<int>(cal.gamemodes.required)),
-             rx + 66.f, H - 62.f, rw - 66.f, kWhite, 0.34f, kChat, {0.f, 0.5f});
+             rx + 66.f, H - 62.f, rw - 66.f, kWhite, 0.36f, kChat, {0.f, 0.5f});
         text(m_page,
              !st.serverCalibration     ? std::string("sigma/s LOCKED - waiting for the server's calibration state")
              : !missingLock.empty()    ? missingLock
                                        : std::string("sigma/s LOCKED until the calibration completes"),
-             rx + 66.f, H - 76.f, rw - 66.f, kGrey, 0.3f, kChat, {0.f, 0.5f});
+             rx + 66.f, H - 76.f, rw - 66.f, kGrey, 0.33f, kChat, {0.f, 0.5f});
         float y = H - 98.f;
         if (!priv.empty()) {
-            text(m_page, priv, rx, y, rw, kGreyBlue, 0.32f, kChat, {0.f, 0.5f});
+            text(m_page, priv, rx, y, rw, kGreyBlue, 0.34f, kChat, {0.f, 0.5f});
             y -= 10.f;
             if (!privNote.empty()) {
-                text(m_page, privNote, rx, y, rw, kGreyBlue, 0.28f, kChat, {0.f, 0.5f});
+                text(m_page, privNote, rx, y, rw, kGreyBlue, 0.3f, kChat, {0.f, 0.5f});
                 y -= 10.f;
             }
         }
@@ -280,7 +280,7 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
             auto c = card(m_page, rx, cardBottom, rw, cardTop - cardBottom, "What to play next", kCard, 230);
             float ty = cardTop - cardBottom - 16.f;
             for (auto const& s : steps) {
-                auto para = paragraph(c, "- " + s, kPad, ty, rw - 2.f * kPad, 0.3f, kWhite);
+                auto para = paragraph(c, "- " + s, kPad, ty, rw - 2.f * kPad, 0.33f, kWhite);
                 ty -= para->getHeight() + 3.f;
                 if (ty < 6.f) break;
             }
@@ -293,40 +293,40 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
         float cx = rx;
         float const chipY = H - 72.f;
         if (confidence) {
-            auto c = chip(fmt::format("{} confidence", ranks::percentText(*confidence)), {30, 90, 130}, kWhite, 0.26f);
+            auto c = chip(fmt::format("{} confidence", ranks::percentText(*confidence)), {30, 90, 130}, kWhite, 0.3f);
             c->setPosition({cx, chipY});
             m_page->addChild(c);
             cx += c->getContentSize().width + 5.f;
         }
         if (!disp.verificationLabel.empty()) {
             ccColor3B vc = verificationColor(disp.verificationStatus);
-            auto c = chip(disp.verificationLabel, ccColor3B{static_cast<GLubyte>(vc.r / 3), static_cast<GLubyte>(vc.g / 3), static_cast<GLubyte>(vc.b / 3)}, vc, 0.26f);
+            auto c = chip(disp.verificationLabel, ccColor3B{static_cast<GLubyte>(vc.r / 3), static_cast<GLubyte>(vc.g / 3), static_cast<GLubyte>(vc.b / 3)}, vc, 0.3f);
             c->setPosition({cx, chipY});
             m_page->addChild(c);
             cx += c->getContentSize().width + 5.f;
         }
         else if (p && p->competitiveVerified) {
             auto c = chip(*p->competitiveVerified ? "Competitive Verified" : "Not yet verified", *p->competitiveVerified ? ccColor3B{30, 110, 60} : ccColor3B{140, 80, 40},
-                          kWhite, 0.26f);
+                          kWhite, 0.3f);
             c->setPosition({cx, chipY});
             m_page->addChild(c);
         }
         float y = H - 88.f;
         if (disp.provisional && !disp.provisionalLabel.empty()) {
-            text(m_page, disp.provisionalLabel, rx, y, rw, kGold, 0.32f, kChat, {0.f, 0.5f});
+            text(m_page, disp.provisionalLabel, rx, y, rw, kGold, 0.34f, kChat, {0.f, 0.5f});
             y -= 12.f;
         }
-        text(m_page, fmt::format("raw {}   practical {}", num(raw), num(practical)), rx, y, rw, kGrey, 0.34f, kChat, {0.f, 0.5f});
+        text(m_page, fmt::format("raw {}   practical {}", num(raw), num(practical)), rx, y, rw, kGrey, 0.36f, kChat, {0.f, 0.5f});
         y -= 12.f;
         if (!priv.empty()) {
-            text(m_page, priv, rx, y, rw, kGreyBlue, 0.3f, kChat, {0.f, 0.5f});
+            text(m_page, priv, rx, y, rw, kGreyBlue, 0.33f, kChat, {0.f, 0.5f});
             y -= 11.f;
         }
         if (p) {
             std::string board = p->leaderboardPosition > 0 ? fmt::format("Leaderboard #{}", p->leaderboardPosition) : std::string("Not on the leaderboard yet");
-            text(m_page, fmt::format("{}   -   {} verified run{}", board, p->verifiedRuns, p->verifiedRuns == 1 ? "" : "s"), rx, y, rw, kGrey, 0.34f, kChat, {0.f, 0.5f});
+            text(m_page, fmt::format("{}   -   {} verified run{}", board, p->verifiedRuns, p->verifiedRuns == 1 ? "" : "s"), rx, y, rw, kGrey, 0.36f, kChat, {0.f, 0.5f});
             y -= 12.f;
-            if (p->unverifiedRankEquivalent) text(m_page, "Provisional rank equivalent: " + rankLabel(list, *p->unverifiedRankEquivalent), rx, y, rw, kGrey, 0.3f, kChat, {0.f, 0.5f});
+            if (p->unverifiedRankEquivalent) text(m_page, "Provisional rank equivalent: " + rankLabel(list, *p->unverifiedRankEquivalent), rx, y, rw, kGrey, 0.33f, kChat, {0.f, 0.5f});
         }
     }
 
@@ -342,7 +342,7 @@ void GprlMenu::buildProfile(client::Status const& st, client::SiteData const& si
         ic->setPosition({cx, stripH - 22.f});
         strip->addChild(ic);
         std::string value = g ? (g->sigma ? ranks::formatSigma(*g->sigma) : (g->calibrationProgress > 0.0 ? percent(g->calibrationProgress) : "-")) : "-";
-        text(strip, value, cx, stripH - 36.f, colW - 4.f, lit ? kWhite : (g && g->calibrationProgress > 0.0 ? kGrey : kDim), 0.28f, kBig, {0.5f, 0.5f});
+        text(strip, value, cx, stripH - 36.f, colW - 4.f, lit ? kWhite : (g && g->calibrationProgress > 0.0 ? kGrey : kDim), 0.3f, kBig, {0.5f, 0.5f});
         double fill = g ? (g->sigma ? std::clamp(*g->sigma / 300.0, 0.0, 1.0) : g->calibrationProgress) : 0.0;
         auto gb = bar(colW - 10.f, 4.f, fill, lit ? kGreen : kBlue, {0, 0, 0}, 140);
         gb->setPosition({cx - (colW - 10.f) / 2.f, 8.f});

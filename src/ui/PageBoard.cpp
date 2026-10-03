@@ -39,7 +39,7 @@ void GprlMenu::buildBoard() {
         footColor = kGreen;
     }
     else foot = "Not on the board yet: your name appears once your sigma/s unlocks and your runs are verified";
-    text(m_page, foot, W / 2.f, 12.f, W - 20.f, footColor, 0.32f, kChat, {0.5f, 0.5f});
+    text(m_page, foot, W / 2.f, 12.f, W - 20.f, footColor, 0.34f, kChat, {0.5f, 0.5f});
 
     float const listW = W - 12.f, listH = H - 30.f;
     auto scroll = ScrollLayer::create(CCSize{listW, listH});
@@ -74,12 +74,12 @@ void GprlMenu::buildBoard() {
         auto b = badge(rank, division, 20.f, false);
         b->setPosition({56.f, h / 2.f});
         node->addChild(b);
-        auto name = text(node, row.displayName, 72.f, h / 2.f, 150.f, you ? kGreen : kWhite, 0.34f, kBig, {0.f, 0.5f}, 0.15f);
+        auto name = text(node, row.displayName, 72.f, h / 2.f, 150.f, you ? kGreen : kWhite, 0.36f, kBig, {0.f, 0.5f}, 0.15f);
         (void)name;
         std::string rankText = row.rank ? (rank ? ranks::bandName(*rank, division) : rankLabel(list, *row.rank)) : std::string();
-        if (!rankText.empty()) text(node, rankText, rowW - 70.f, h / 2.f, 86.f, rank ? toCc(rank->color) : kGrey, 0.34f, kChat, {1.f, 0.5f});
+        if (!rankText.empty()) text(node, rankText, rowW - 70.f, h / 2.f, 86.f, rank ? toCc(rank->color) : kGrey, 0.36f, kChat, {1.f, 0.5f});
         std::string sigmaText = row.sigma ? ranks::formatSigma(*row.sigma) : std::string("-");
-        text(node, sigmaText, rowW - 8.f, h / 2.f, 58.f, kWhite, 0.34f, kBig, {1.f, 0.5f});
+        text(node, sigmaText, rowW - 8.f, h / 2.f, 58.f, kWhite, 0.36f, kBig, {1.f, 0.5f});
         scroll->m_contentLayer->addChild(node);
     }
     scroll->m_contentLayer->updateLayout();
